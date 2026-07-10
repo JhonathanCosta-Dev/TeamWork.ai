@@ -1,0 +1,86 @@
+# Maintainer: você <voce@example.com>
+# PKGBUILD para empacotamento LOCAL (makepkg -si dentro desta pasta,
+# com o repositório como fonte). Nada é publicado automaticamente.
+
+pkgname=teamwork-ai-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Equipe local de agentes de IA: daemon Rust + widget Quickshell (Wayland)"
+arch=('x86_64' 'aarch64')
+url="https://example.invalid/teamwork-ai"
+license=('MIT')
+depends=('gcc-libs' 'glibc')
+# quickshell está no AUR (quickshell ou quickshell-git); instale-o separadamente.
+optdepends=(
+    'quickshell: widget de desktop (AUR)'
+    'qt6-declarative: runtime QML'
+)
+makedepends=('cargo' 'git')
+provides=('teamwork-ai')
+conflicts=('teamwork-ai')
+# Fonte local: rode makepkg a partir de packaging/arch dentro do repositório.
+source=()
+sha256sums=()
+
+_srcdir="$(realpath ../..)"
+
+pkgver() {
+    cd "$_srcdir"
+    printf "0.1.0.r%s" "$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+}
+
+build() {
+    cd "$_srcdir"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo build --release -p teamwork-ai-daemon
+}
+
+check() {
+    cd "$_srcdir"
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo test --workspace --release
+}
+
+package() {
+    cd "$_srcdir"
+
+    # Binários
+    install -Dm755 "$srcdir/target/release/teamwork-ai-daemon" \
+        "$pkgdir/usr/bin/teamwork-ai-daemon"
+    install -Dm755 "$srcdir/target/release/twctl" \
+        "$pkgdir/usr/bin/twctl"
+    install -Dm755 scripts/teamwork-ai-launch.sh \
+        "$pkgdir/usr/bin/teamwork-ai"
+
+    # Widget QML + assets
+    install -dm755 "$pkgdir/usr/share/teamwork-ai"
+    cp -r apps/widget "$pkgdir/usr/share/teamwork-ai/widget"
+    cp -r assets "$pkgdir/usr/share/teamwork-ai/assets"
+
+    # Atalho no menu de aplicativos
+    install -Dm644 packaging/teamwork-ai.desktop \
+        "$pkgdir/usr/share/applications/teamwork-ai.desktop"
+    install -Dm644 assets/icon.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/teamwork-ai.svg"
+
+    # systemd --user (ExecStart aponta pra ~/.local/bin por padrão — no pacote
+    # o binário fica em /usr/bin, então ajustamos o caminho aqui)
+    install -Dm644 packaging/systemd/teamwork-ai-daemon.service \
+        "$pkgdir/usr/lib/systemd/user/teamwork-ai-daemon.service"
+    sed -i 's|^ExecStart=.*|ExecStart=/usr/bin/teamwork-ai-daemon|' \
+        "$pkgdir/usr/lib/systemd/user/teamwork-ai-daemon.service"
+    install -Dm644 packaging/systemd/teamwork-ai-widget.service \
+        "$pkgdir/usr/lib/systemd/user/teamwork-ai-widget.service"
+    sed -i 's|^ExecStart=.*|ExecStart=/usr/bin/env quickshell -p /usr/share/teamwork-ai/widget/shell.qml|' \
+        "$pkgdir/usr/lib/systemd/user/teamwork-ai-widget.service"
+
+    # Configuração de exemplo e documentação
+    install -Dm644 config/teamwork-ai.example.toml \
+        "$pkgdir/usr/share/teamwork-ai/teamwork-ai.example.toml"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/teamwork-ai/README.md"
+    cp -r docs "$pkgdir/usr/share/doc/teamwork-ai/docs"
+
+    # Licença
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,38 @@
+# Unidade systemd --user do daemon Team Work AI.
+# Instalar em: ~/.config/systemd/user/teamwork-ai-daemon.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now teamwork-ai-daemon
+#
+# Chaves de API: crie ~/.config/teamwork-ai/env (chmod 600) no formato
+#   GEMINI_API_KEY=...
+# Nunca faça commit desse arquivo.
+
+[Unit]
+Description=Team Work AI daemon (orquestrador local de agentes)
+Documentation=file:///usr/share/doc/teamwork-ai/README.md
+After=default.target
+
+[Service]
+Type=simple
+# Instalação de usuário (~/.local/bin) ou pacote (/usr/bin)
+ExecStart=%h/.local/bin/teamwork-ai-daemon
+Restart=on-failure
+RestartSec=3
+# Variáveis opcionais (arquivo pode não existir)
+EnvironmentFile=-%h/.config/teamwork-ai/env
+Environment=RUST_LOG=info
+# Endurecimento básico (processo do usuário, sem root)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# StateDirectory/CacheDirectory/RuntimeDirectory: o systemd CRIA essas pastas
+# (sob %S, %C, %t) antes de montar o sandbox — ao contrário de ReadWritePaths,
+# que exige que o caminho já exista, senão falha com status=226/NAMESPACE.
+StateDirectory=teamwork-ai
+CacheDirectory=teamwork-ai
+RuntimeDirectory=teamwork-ai
+ReadWritePaths=%h/.local/share/teamwork-ai
+
+[Install]
+WantedBy=default.target

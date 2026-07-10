@@ -1,0 +1,39 @@
+[package]
+name = "teamwork-ai-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "teamwork-ai-daemon"
+
+[lib]
+name = "teamwork_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "teamwork-ai-daemon"
+path = "src/main.rs"
+
+[[bin]]
+name = "twctl"
+path = "src/bin/twctl.rs"
+
+[dependencies]
+teamwork-protocol = { workspace = true }
+teamwork-domain = { workspace = true }
+teamwork-providers = { workspace = true }
+teamwork-storage = { workspace = true }
+teamwork-orchestrator = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["codec"] }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+.env
+.env.local
+*.db
+*.db-wal
+*.db-shm
+/packaging/arch/pkg/
+/packaging/arch/src/
+/packaging/arch/*.pkg.tar.*

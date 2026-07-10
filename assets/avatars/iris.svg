@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Íris — pesquisadora (original, Team Work AI) -->
+  <circle cx="32" cy="32" r="30" fill="#33635c"/>
+  <circle cx="32" cy="32" r="30" fill="none" stroke="#73daca" stroke-width="2"/>
+  <circle cx="32" cy="26" r="11" fill="#dff5ef"/>
+  <circle cx="28" cy="25" r="2" fill="#1a1b26"/>
+  <circle cx="36" cy="25" r="2" fill="#1a1b26"/>
+  <path d="M27 30 q5 4 10 0" stroke="#1a1b26" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <path d="M18 52 q14 -14 28 0" fill="#73daca"/>
+  <!-- lupa -->
+  <circle cx="47" cy="15" r="6" fill="none" stroke="#dff5ef" stroke-width="2"/>
+  <line x1="51" y1="20" x2="56" y2="25" stroke="#dff5ef" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

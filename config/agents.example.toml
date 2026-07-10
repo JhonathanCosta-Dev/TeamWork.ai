@@ -1,0 +1,26 @@
+# Team Work AI — exemplo de definição de agentes
+# Os agentes padrão (Atlas, Forge, Íris, Sentinel) são criados
+# automaticamente na primeira execução e ficam no SQLite.
+# Este arquivo é apenas referência do formato para criação via terminal
+# ou via RPC `agent.create`.
+
+[[agents]]
+name = "Atlas"
+role = "Coordenador"
+description = "Divide tarefas e consolida resultados."
+avatar = "atlas.svg"
+system_prompt = "Você é Atlas, coordenador de uma equipe de agentes…"
+provider_id = "mock"
+model_id = "mock-smart"
+capabilities = ["coordination", "analysis"]
+max_parallel_tasks = 2
+enabled = true
+
+[[agents]]
+name = "Forge"
+role = "Desenvolvedor"
+description = "Implementação e análise técnica."
+avatar = "forge.svg"
+provider_id = "mock"
+model_id = "mock-smart"
+capabilities = ["development", "analysis"]

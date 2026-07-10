@@ -1,0 +1,48 @@
+# Team Work AI — configuração do daemon
+# Copie para: $XDG_CONFIG_HOME/teamwork-ai/teamwork-ai.toml
+# Recarregue reiniciando o daemon (systemctl --user restart teamwork-ai-daemon).
+# Chaves de API NÃO ficam aqui: use variáveis de ambiente (.env.example).
+
+[daemon]
+# socket_path = "/run/user/1000/teamwork-ai/teamwork-ai.sock"
+# db_path = "~/.local/share/teamwork-ai/teamwork.db"
+max_connections = 16
+read_timeout_secs = 600
+
+[limits]
+max_global_concurrency = 4
+max_provider_concurrency = 2
+task_timeout_secs = 120
+max_agent_turns = 8
+max_reviews = 2
+max_calls_per_run = 20
+max_output_tokens = 2048
+retry_max_retries = 3
+retry_base_delay_ms = 500
+
+[providers]
+# Nunca gere custos silenciosamente.
+allow_paid_models = false
+free_models_only = true
+
+# Limites locais de requisições/minuto. Os valores reais dos planos gratuitos
+# mudam com o tempo — a API e os cabeçalhos 429/retry-after são a fonte de
+# verdade; estes valores apenas evitam rajadas.
+[providers.gemini]
+requests_per_minute = 10
+
+[providers.groq]
+requests_per_minute = 25
+
+[providers.openrouter]
+requests_per_minute = 15
+
+[providers.mock]
+requests_per_minute = 1000
+
+[memory]
+# Memória permanente por agente: ativa por padrão, sem precisar configurar
+# nada (a raiz padrão já é "$XDG_DATA_HOME/teamwork-ai/memory"). Ative/
+# desative em runtime com /memory on|off no terminal do widget; use esta
+# opção só se quiser mover a raiz para outro lugar (ex.: um disco cifrado).
+# root = "/home/voce/.local/share/teamwork-ai/memory"

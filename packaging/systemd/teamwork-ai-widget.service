@@ -1,0 +1,21 @@
+# Unidade OPCIONAL para iniciar o widget Quickshell.
+# Alternativa recomendada no Niri: spawn-at-startup (ver docs/arch-cachyos-niri.md).
+#
+# Instalar em: ~/.config/systemd/user/teamwork-ai-widget.service
+
+[Unit]
+Description=Team Work AI widget (Quickshell)
+After=graphical-session.target teamwork-ai-daemon.service
+Wants=teamwork-ai-daemon.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Ajuste o caminho se instalou em outro local (pacote: /usr/share/teamwork-ai/widget)
+ExecStart=/usr/bin/env quickshell -p %h/.local/share/teamwork-ai/widget/shell.qml
+Restart=on-failure
+RestartSec=3
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target

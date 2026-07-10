@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Team Work AI
+GenericName=Equipe de agentes de IA
+Comment=Equipe local de agentes de IA (daemon Rust + widget Quickshell)
+Exec=/usr/bin/teamwork-ai
+Icon=teamwork-ai
+Terminal=false
+Categories=Development;
+Keywords=teamwork;team work;tw.ai;twai;agentes;agents;IA;AI;equipe;
+StartupNotify=true
