@@ -54,11 +54,22 @@ Rust (tokio, reqwest+rustls, rusqlite, tracing, thiserror), QML/Qt Quick via
 Quickshell (Wayland/wlr-layer-shell), SQLite, NDJSON sobre Unix socket.
 Sem Electron, sem game engine, sem TCP.
 
-## Dependências
+## Requisitos e compatibilidade
 
+**Sistema operacional:** Linux com **Wayland** — obrigatório. O widget usa
+Quickshell (protocolo `wlr-layer-shell`) e o daemon usa socket Unix; nenhum
+dos dois roda em **Windows**, **macOS** ou sessões **X11** puras. Testado em
+**Arch Linux** e **CachyOS** com o compositor **Niri** (ver
+`docs/arch-cachyos-niri.md`); deve funcionar em outros compositores wlr
+(Hyprland, Sway, etc.), mas só Niri foi validado na prática.
+
+Suporte a Windows está no roadmap como um **frontend separado** (fora do
+Quickshell) conversando com o mesmo daemon Rust — ainda não implementado.
+
+**Dependências:**
 - Rust estável (Arch: `pacman -S rust` ou rustup)
 - Quickshell + Qt 6 (Arch: AUR `quickshell` ou `quickshell-git`)
-- Wayland (testado com Niri em mente); `just` opcional
+- `just` opcional (roda os comandos do `Justfile` diretamente também)
 
 ## Execução rápida (sem chave de API)
 
@@ -152,6 +163,8 @@ anti-loop entre agentes, cancelamento global. Detalhes: `docs/security.md`.
    escolher avatar e ativar/desativar pela aba Agentes.
 4. Secret Service/libsecret para chaves.
 5. Transcrição de áudio (Groq) e entradas multimodais (Gemini).
+6. Frontend para Windows 11 (fora do Quickshell) conversando com o mesmo
+   daemon Rust — exige trocar o socket Unix por named pipe/TCP local.
 
 ## Documentação
 
