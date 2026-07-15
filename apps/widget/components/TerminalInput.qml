@@ -29,7 +29,7 @@ Rectangle {
     Row {
         anchors.fill: parent
         anchors.leftMargin: 10
-        anchors.rightMargin: 10
+        anchors.rightMargin: stopBtn.visible ? 38 : 10
         anchors.topMargin: 7
         anchors.bottomMargin: 7
         spacing: 6
@@ -108,6 +108,19 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // Parar: cancela as execuções em andamento (mandou errado? aborta).
+    IconButton {
+        id: stopBtn
+        visible: (root.store ? (root.store.activeTasks ?? 0) : 0) > 0
+        anchors.right: parent.right
+        anchors.rightMargin: 6
+        anchors.verticalCenter: parent.verticalCenter
+        glyph: "■"
+        danger: true
+        tooltip: "Parar a execução atual"
+        onClicked: root.store.cancelActive()
     }
 
     function _submit() {

@@ -23,8 +23,9 @@
 ## Segredos
 
 - Chaves de API: variáveis de ambiente (`GEMINI_API_KEY`, `GROQ_API_KEY`,
-  `OPENROUTER_API_KEY`) têm prioridade; na ausência delas o daemon lê
-  automaticamente `~/.config/teamwork-ai/env` (0600) na inicialização.
+  `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`) têm prioridade; na ausência
+  delas o daemon lê automaticamente `~/.config/teamwork-ai/env` (0600) na
+  inicialização.
 - O widget possui um campo **write-only** (Config → Chaves de API) que envia
   a chave via `provider.set_key` pelo socket local (0600, mesmo usuário);
   o daemon grava no arquivo env e a chave nunca é devolvida ao cliente,

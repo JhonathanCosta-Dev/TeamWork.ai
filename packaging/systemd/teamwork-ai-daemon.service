@@ -25,14 +25,15 @@ Environment=RUST_LOG=info
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
+# ProtectHome fica DESLIGADO de propósito: o provedor claude-code (agência
+# "sem shell") edita arquivos do usuário — projetos, vault — e o CLI precisa
+# gravar o próprio estado em ~/.claude. O shell continua bloqueado pelo gate
+# de ferramentas do CLI, não pelo sandbox do systemd.
 # StateDirectory/CacheDirectory/RuntimeDirectory: o systemd CRIA essas pastas
-# (sob %S, %C, %t) antes de montar o sandbox — ao contrário de ReadWritePaths,
-# que exige que o caminho já exista, senão falha com status=226/NAMESPACE.
+# (sob %S, %C, %t) antes de montar o sandbox.
 StateDirectory=teamwork-ai
 CacheDirectory=teamwork-ai
 RuntimeDirectory=teamwork-ai
-ReadWritePaths=%h/.local/share/teamwork-ai
 
 [Install]
 WantedBy=default.target

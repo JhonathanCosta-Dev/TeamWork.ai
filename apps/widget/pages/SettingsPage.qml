@@ -163,6 +163,108 @@ Column {
         }
     }
 
+    // Ciclo de desmontar/remontar do holograma (tela cheia).
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: 10
+            color: root.store.hologramCycle ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: 8
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.hologramCycle ? parent.width - width - 2 : 2
+                Behavior on x {
+                    NumberAnimation { duration: Theme.animFast }
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    root.store.hologramCycle = !root.store.hologramCycle;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Holograma: desmontar e remontar a cada 15 s"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Rectangle {
+        width: parent.width
+        height: 1
+        color: Theme.border
+    }
+
+    // ------------------------------------------------------------------
+    // Acessibilidade da IA
+    // ------------------------------------------------------------------
+
+    Text {
+        text: "Acessibilidade da IA"
+        color: Theme.textPrimary
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontSizeLarge
+        font.bold: true
+    }
+
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: 10
+            color: root.store.speakReplies ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: 8
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.speakReplies ? parent.width - width - 2 : 2
+                Behavior on x {
+                    NumberAnimation { duration: Theme.animFast }
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    root.store.speakReplies = !root.store.speakReplies;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Falar todas as respostas por voz (mesmo digitando)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "Com esta opção ativa, toda resposta final da equipe também é lida em voz alta pelo Jorginho — além de aparecer no chat."
+        color: Theme.textDisabled
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
     Rectangle {
         width: parent.width
         height: 1
@@ -198,7 +300,7 @@ Column {
         width: parent.width
         spacing: 4
         Repeater {
-            model: ["groq", "gemini", "openrouter"]
+            model: ["groq", "gemini", "openrouter", "anthropic"]
             delegate: Rectangle {
                 id: keyProvChip
                 required property var modelData
@@ -268,7 +370,7 @@ Column {
                 Text {
                     visible: keyInput.text.length === 0 && !keyInput.activeFocus
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "cole a chave aqui (gsk_…, AIza…)"
+                    text: "cole a chave aqui (gsk_…, AIza…, sk-ant-…)"
                     color: Theme.textDisabled
                     font.pixelSize: Theme.fontSizeSmall
                     font.family: Theme.fontFamily

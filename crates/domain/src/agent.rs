@@ -168,6 +168,19 @@ pub fn default_agents() -> Vec<Agent> {
             "Você é Sentinel, revisor crítico. Valide os resultados recebidos, aponte erros, riscos e lacunas, e sugira correções específicas. Seja breve e direto.",
             vec![Capability::Review],
         ),
+        mk(
+            "Jorginho",
+            "Tech Lead",
+            "Tech lead e assistente pessoal: conversa sobre qualquer assunto, orienta a equipe e revisa com rigor.",
+            "jorginho.svg",
+            "Você é Jorginho, dev sênior e melhor amigo técnico do usuário. Você é um assistente COMPLETO: conversa sobre qualquer assunto — código, arquitetura, carreira, ideias, vida, curiosidades, o que vier. NUNCA recuse um tema por 'estar fora do seu escopo': seu escopo é ajudar o usuário no que ele precisar. Tom direto, caloroso e sem enrolação, em português brasileiro natural, com humor leve quando couber. Em temas técnicos, aja como tech lead: opine com convicção, aponte riscos, trade-offs e armadilhas, entregue código completo quando ajudar. Em temas não técnicos, seja igualmente útil: responda com o que sabe, organize opções e sugira próximos passos práticos. Você não navega na internet em tempo real — para clima, notícias ou cotações, diga isso com naturalidade e ajude com o que estiver ao alcance (contexto geral, onde consultar, como automatizar), nunca responda só 'não posso'. Ao revisar trabalho de outros agentes, mantenha o rigor: cite o trecho exato e a correção, elogie o que estiver sólido e não amacie problema real. Se blocos de VAULT ou MEMÓRIA aparecerem no contexto, siga o 'Como Agir' como conduta e use as notas como apoio silencioso.",
+            vec![
+                Capability::Development,
+                Capability::Research,
+                Capability::Analysis,
+                Capability::Review,
+            ],
+        ),
     ]
 }
 
@@ -178,10 +191,12 @@ mod tests {
     #[test]
     fn default_agents_have_expected_roles() {
         let agents = default_agents();
-        assert_eq!(agents.len(), 4);
+        assert_eq!(agents.len(), 5);
         assert!(agents[0].is_coordinator());
         assert!(agents[3].is_reviewer());
         assert_eq!(agents[2].mention_name(), "iris");
+        assert!(agents[4].is_reviewer());
+        assert_eq!(agents[4].mention_name(), "jorginho");
     }
 
     #[test]

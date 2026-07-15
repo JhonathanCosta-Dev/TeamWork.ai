@@ -1,5 +1,8 @@
-//! Abstração de provedores de IA e implementações: Mock, Gemini, Groq e OpenRouter.
+//! Abstração de provedores de IA e implementações: Mock, Gemini, Groq,
+//! OpenRouter e Anthropic.
 
+pub mod anthropic;
+pub mod claude_code;
 pub mod error;
 pub mod gemini;
 pub mod mock;
@@ -9,6 +12,8 @@ pub mod registry;
 pub mod retry;
 pub mod types;
 
+pub use anthropic::AnthropicProvider;
+pub use claude_code::ClaudeCodeProvider;
 pub use error::ProviderError;
 pub use gemini::GeminiProvider;
 pub use mock::MockProvider;
@@ -23,7 +28,7 @@ use async_trait::async_trait;
 /// Interface comum de todos os provedores de IA.
 #[async_trait]
 pub trait AiProvider: Send + Sync {
-    /// Identificador estável ("mock", "gemini", "groq", "openrouter").
+    /// Identificador estável ("mock", "gemini", "groq", "openrouter", "anthropic").
     fn id(&self) -> &str;
     /// Nome exibível.
     fn display_name(&self) -> &str;
@@ -37,6 +42,19 @@ pub trait AiProvider: Send + Sync {
         request: CompletionRequest,
     ) -> Result<CompletionResponse, ProviderError>;
     async fn stream(&self, request: CompletionRequest) -> Result<CompletionStream, ProviderError>;
+
+    /// Transcreve áudio (bytes de um WAV) em texto. Só provedores com
+    /// `capabilities().audio_transcription` implementam; os demais herdam
+    /// este padrão e devolvem `Unsupported`.
+    async fn transcribe(
+        &self,
+        _audio: Vec<u8>,
+        _language: Option<&str>,
+    ) -> Result<String, ProviderError> {
+        Err(ProviderError::Unsupported {
+            provider: self.id().to_string(),
+        })
+    }
 }
 
 /// Estimativa grosseira de tokens quando o provedor não retorna uso

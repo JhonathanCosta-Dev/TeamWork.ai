@@ -663,7 +663,7 @@ mod tests {
             s.upsert_agent(&a).await.unwrap();
         }
         let agents = s.list_agents().await.unwrap();
-        assert_eq!(agents.len(), 4);
+        assert_eq!(agents.len(), 5);
         assert!(agents.iter().any(|a| a.name == "Íris"));
 
         // Atualização
@@ -671,7 +671,7 @@ mod tests {
         atlas.model_id = "outro-modelo".into();
         s.upsert_agent(&atlas).await.unwrap();
         let again = s.list_agents().await.unwrap();
-        assert_eq!(again.len(), 4);
+        assert_eq!(again.len(), 5);
         assert_eq!(again[0].model_id, "outro-modelo");
     }
 
@@ -770,6 +770,6 @@ mod tests {
             }
         }
         let s2 = Storage::open(&db).unwrap();
-        assert_eq!(s2.list_agents().await.unwrap().len(), 4);
+        assert_eq!(s2.list_agents().await.unwrap().len(), 5);
     }
 }

@@ -67,6 +67,10 @@ pub struct CompletionResponse {
 pub struct StreamChunk {
     pub delta: String,
     pub done: bool,
+    /// Progresso transiente (ex.: narração/uso de ferramenta de um agente
+    /// CLI): aparece no stream ao vivo, mas NÃO entra no conteúdo final.
+    #[serde(default)]
+    pub progress: bool,
 }
 
 pub type CompletionStream =

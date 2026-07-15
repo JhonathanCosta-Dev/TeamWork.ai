@@ -15,6 +15,11 @@ Item {
     property string monitorName: ""         // "" = todos/primeiro
     property bool reserveSpace: false
     property string currentPage: "agents"   // agents | tasks | settings
+    // Holograma da tela cheia: desmontar/remontar as partículas em ciclo.
+    property bool hologramCycle: true
+    // Acessibilidade da IA: toda resposta final também sai por voz,
+    // mesmo quando a pergunta foi digitada.
+    property bool speakReplies: false
 
     // Dados
     property var agents: []
@@ -93,6 +98,8 @@ Item {
                 if (v.reserveSpace !== undefined) root.reserveSpace = v.reserveSpace;
                 if (v.expanded !== undefined) root.expanded = v.expanded;
                 if (v.fullscreen !== undefined) root.fullscreen = v.fullscreen;
+                if (v.hologramCycle !== undefined) root.hologramCycle = v.hologramCycle;
+                if (v.speakReplies !== undefined) root.speakReplies = v.speakReplies;
             }
         });
     }
@@ -105,7 +112,9 @@ Item {
                 monitorName: root.monitorName,
                 reserveSpace: root.reserveSpace,
                 expanded: root.expanded,
-                fullscreen: root.fullscreen
+                fullscreen: root.fullscreen,
+                hologramCycle: root.hologramCycle,
+                speakReplies: root.speakReplies
             }
         }, null);
     }
@@ -265,6 +274,25 @@ Item {
             if (r.text && r.text.length > 0)
                 _pushTerminal("reply", r.text, "");
         });
+    }
+
+    // Botão de parar: cancela todas as execuções em andamento (o daemon
+    // aceita id de run e cancela o run inteiro de uma vez).
+    function cancelActive() {
+        const ids = {};
+        for (const t of root.tasks) {
+            const s = t.status;
+            if (s === "running" || s === "waiting" || s === "pending"
+                    || s === "assigned" || s === "planned" || s === "paused")
+                ids[t.run_id ?? t.id] = true;
+        }
+        const keys = Object.keys(ids);
+        if (keys.length === 0)
+            return;
+        for (const k of keys)
+            backend.call("task.cancel", { task_id: k }, null);
+        _pushTerminal("event", "⏹ Cancelamento solicitado ("
+                      + keys.length + " execução(ões) ativa(s)).", "");
     }
 
     // A confirmação em si fica na UI (AgentsPage) — aqui só faz a chamada.

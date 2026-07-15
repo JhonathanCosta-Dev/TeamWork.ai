@@ -37,6 +37,11 @@ requests_per_minute = 25
 [providers.openrouter]
 requests_per_minute = 15
 
+# Anthropic não tem tier gratuito: allow_paid_models = true acima é
+# obrigatório pra este provedor funcionar de verdade (ver docs/providers.md).
+[providers.anthropic]
+requests_per_minute = 10
+
 [providers.mock]
 requests_per_minute = 1000
 

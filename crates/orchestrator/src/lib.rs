@@ -442,7 +442,11 @@ impl Orchestrator {
             .await
             .ok_or_else(|| OrchestratorError::AgentNotFound(name_or_id.to_string()))?;
         let busy = matches!(
-            self.views.read().await.get(agent.id.as_str()).map(|v| v.status),
+            self.views
+                .read()
+                .await
+                .get(agent.id.as_str())
+                .map(|v| v.status),
             Some(
                 AgentStatus::Planning
                     | AgentStatus::Waiting
@@ -665,7 +669,9 @@ impl Orchestrator {
         for top in top_level.iter().copied() {
             let best = all_tasks
                 .iter()
-                .filter(|t| t.parent_id.as_ref() == Some(&top.id) && t.status == TaskStatus::Completed)
+                .filter(|t| {
+                    t.parent_id.as_ref() == Some(&top.id) && t.status == TaskStatus::Completed
+                })
                 .max_by_key(|t| t.updated_at)
                 .unwrap_or(top);
             let Some(content) = best.result.clone() else {
@@ -1294,6 +1300,25 @@ impl Orchestrator {
         system_prompt.push_str(knowledge::SHOPIFY_PROMPT);
         if let Some(ws) = &workspace {
             system_prompt.push_str(&files::workspace_prompt(ws));
+        }
+        // Vault pessoal (Obsidian): a setting "vault.<mention>" aponta a
+        // pasta; o "Como Agir" e o índice entram no prompt do agente.
+        if let Ok(Some(v)) = self
+            .storage
+            .get_setting(&format!("vault.{}", agent.mention_name()))
+            .await
+        {
+            if let Some(path) = v.as_str() {
+                let vroot = std::path::Path::new(path);
+                if let Some(vp) = knowledge::vault_prompt(vroot) {
+                    system_prompt.push_str(&vp);
+                }
+                // Skills sob demanda: nota citada pelo nome na mensagem
+                // entra inteira no prompt.
+                if let Some(np) = knowledge::vault_notes_on_demand(vroot, &task.message) {
+                    system_prompt.push_str(&np);
+                }
+            }
         }
         if let Some(root) = &memory_root {
             let mem_ctx = memory::build_context(root, agent);
@@ -1987,7 +2012,9 @@ impl Orchestrator {
         let mut buffer = String::new();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?; // erro no meio do stream → retry reinicia
-            content.push_str(&chunk.delta);
+            if !chunk.progress {
+                content.push_str(&chunk.delta);
+            }
             buffer.push_str(&chunk.delta);
             if (buffer.chars().count() >= 24 || chunk.done) && !buffer.is_empty() {
                 self.emit_transient(stream_event(

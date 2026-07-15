@@ -23,7 +23,7 @@ por quebra de linha (NDJSON)**, protocolo versionado (`version: 1`).
 └─────────────────────┘                       │  SQLite · rate limit · logs  │
                                               └──────────────┬───────────────┘
                                                    HTTPS     │
-                                    Gemini · Groq · OpenRouter · Mock (local)
+                          Gemini · Groq · OpenRouter · Anthropic · Mock (local)
 ```
 
 ## Decisões principais
@@ -54,7 +54,7 @@ teamwork-ai/
 ├── crates/
 │   ├── protocol/             # tipos de request/response/evento, versionamento, validação
 │   ├── domain/               # Agent, Task, Run, AgentMessage, parser de comandos
-│   ├── providers/            # trait AiProvider, Mock, Gemini, Groq, OpenRouter, rate limit, retry
+│   ├── providers/            # trait AiProvider, Mock, Gemini, Groq, OpenRouter, Anthropic, rate limit, retry
 │   ├── storage/              # SQLite, migrations, repositórios
 │   └── orchestrator/         # grafo de tarefas, execução paralela, consolidação, eventos,
 │                             #   workspace (files.rs) e memória por agente (memory.rs)

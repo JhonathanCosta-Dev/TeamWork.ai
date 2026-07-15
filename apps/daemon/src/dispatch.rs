@@ -4,12 +4,12 @@ use crate::DaemonConfig;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use teamwork_domain::Agent;
+use teamwork_domain::{Agent, Capability};
 use teamwork_orchestrator::{Orchestrator, OrchestratorError};
 use teamwork_protocol::{
     error_codes, methods, AgentSetModelParams, AgentSetProviderParams, EventsRecentParams,
     ProviderModelsParams, Request, Response, SettingsGetParams, SettingsSetParams,
-    TaskCreateParams, TaskIdParams, TerminalInputParams,
+    TaskCreateParams, TaskIdParams, TerminalInputParams, VoiceTranscribeParams,
 };
 use teamwork_providers::ProviderRegistry;
 use teamwork_storage::Storage;
@@ -69,6 +69,8 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 provider_id: Option<String>,
                 #[serde(default)]
                 model_id: Option<String>,
+                #[serde(default)]
+                capabilities: Vec<Capability>,
             }
             let p: P = match params(&req) {
                 Ok(p) => p,
@@ -86,6 +88,7 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
             agent.description = p.description;
             agent.avatar = p.avatar;
             agent.system_prompt = p.system_prompt;
+            agent.capabilities = p.capabilities;
             match state.orchestrator.create_agent(agent.clone()).await {
                 Ok(()) => Response::ok(id, json!({ "agent_id": agent.id })),
                 Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
@@ -110,6 +113,8 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 enabled: Option<bool>,
                 #[serde(default)]
                 max_parallel_tasks: Option<usize>,
+                #[serde(default)]
+                capabilities: Option<Vec<Capability>>,
             }
             let p: P = match params(&req) {
                 Ok(p) => p,
@@ -138,6 +143,9 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
             }
             if let Some(v) = p.max_parallel_tasks {
                 agent.max_parallel_tasks = v.clamp(1, 8);
+            }
+            if let Some(v) = p.capabilities {
+                agent.capabilities = v;
             }
             agent.updated_at = chrono::Utc::now();
             match state.orchestrator.update_agent(agent).await {
@@ -264,6 +272,7 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 "gemini" => "GEMINI_API_KEY",
                 "groq" => "GROQ_API_KEY",
                 "openrouter" => "OPENROUTER_API_KEY",
+                "anthropic" => "ANTHROPIC_API_KEY",
                 other => {
                     return Response::err(
                         id,
@@ -352,6 +361,51 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
             match state.orchestrator.handle_terminal_input(&p.input).await {
                 Ok(reply) => Response::ok(id, serde_json::to_value(reply).unwrap_or(json!({}))),
                 Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
+            }
+        }
+
+        methods::VOICE_TRANSCRIBE => {
+            let p: VoiceTranscribeParams = match params(&req) {
+                Ok(p) => p,
+                Err(r) => return r,
+            };
+            // Limite da API de áudio do Groq (25 MB) — também evita ler
+            // arquivos arbitrários grandes.
+            const MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
+            match tokio::fs::metadata(&p.path).await {
+                Ok(m) if m.len() > MAX_AUDIO_BYTES => {
+                    return Response::err(id, error_codes::INVALID_PARAMS, "áudio maior que 25 MB");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    return Response::err(
+                        id,
+                        error_codes::INVALID_PARAMS,
+                        format!("áudio não encontrado: {e}"),
+                    );
+                }
+            }
+            let audio = match tokio::fs::read(&p.path).await {
+                Ok(a) => a,
+                Err(e) => {
+                    return Response::err(
+                        id,
+                        error_codes::INTERNAL,
+                        format!("falha lendo áudio: {e}"),
+                    );
+                }
+            };
+            let entry = match state.registry.get("groq") {
+                Ok(e) => e,
+                Err(e) => return Response::err(id, error_codes::PROVIDER_ERROR, e.to_string()),
+            };
+            match entry
+                .provider
+                .transcribe(audio, p.language.as_deref())
+                .await
+            {
+                Ok(text) => Response::ok(id, json!({ "text": text })),
+                Err(e) => Response::err(id, error_codes::PROVIDER_ERROR, e.to_string()),
             }
         }
 

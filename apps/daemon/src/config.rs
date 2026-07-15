@@ -32,6 +32,7 @@ impl Default for DaemonConfig {
         rpm.insert("gemini".to_string(), 10);
         rpm.insert("groq".to_string(), 25);
         rpm.insert("openrouter".to_string(), 15);
+        rpm.insert("anthropic".to_string(), 10);
         let orchestrator = OrchestratorConfig {
             memory_root: Some(crate::paths::memory_dir()),
             ..OrchestratorConfig::default()

@@ -62,7 +62,7 @@ QtObject {
     }
 
     // Cor fixa por IDENTIDADE do agente (não por status) — usada no chat pra
-    // deixar claro de relance quem está falando. As cores dos quatro agentes
+    // deixar claro de relance quem está falando. As cores dos agentes
     // padrão espelham a cor principal do próprio avatar SVG de cada um
     // (apps/widget/assets/avatars/*.svg), então a identidade visual já
     // combina com o avatar que aparece do lado da mensagem.
@@ -70,7 +70,8 @@ QtObject {
         "atlas": "#7aa2f7",
         "forge": "#e0af68",
         "iris": "#73daca",
-        "sentinel": "#f7768e"
+        "sentinel": "#f7768e",
+        "jorginho": "#cc785c"
     })
     // Paleta pra agentes criados pelo usuário (sem cor fixa conhecida) — cada
     // nome sempre cai na mesma cor (hash determinístico), sem colidir com as

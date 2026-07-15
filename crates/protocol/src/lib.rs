@@ -210,6 +210,9 @@ pub mod methods {
     /// a chave nunca é devolvida ao cliente nem registrada em logs).
     pub const PROVIDER_SET_KEY: &str = "provider.set_key";
     pub const TERMINAL_INPUT: &str = "terminal.input";
+    /// Transcreve um arquivo de áudio local (WAV) em texto, via provedor
+    /// com suporte a `audio_transcription` (Groq/Whisper).
+    pub const VOICE_TRANSCRIBE: &str = "voice.transcribe";
     pub const EVENTS_RECENT: &str = "events.recent";
     pub const SETTINGS_GET: &str = "settings.get";
     pub const SETTINGS_SET: &str = "settings.set";
@@ -235,6 +238,15 @@ pub struct TaskIdParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalInputParams {
     pub input: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceTranscribeParams {
+    /// Caminho local do WAV gravado pelo widget (mesma máquina/usuário).
+    pub path: String,
+    /// Código ISO-639-1 ("pt") — opcional; melhora a precisão do Whisper.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

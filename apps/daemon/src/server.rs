@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use teamwork_orchestrator::Orchestrator;
 use teamwork_protocol::{events, Event, Response, MAX_LINE_BYTES};
-use teamwork_providers::{GeminiProvider, MockProvider, OpenAiCompatProvider, ProviderRegistry};
+use teamwork_providers::{
+    AnthropicProvider, GeminiProvider, MockProvider, OpenAiCompatProvider, ProviderRegistry,
+};
 use teamwork_storage::Storage;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Framed, LinesCodec};
@@ -63,6 +65,23 @@ pub fn build_registry(config: &DaemonConfig) -> ProviderRegistry {
             allow_paid_models = config.allow_paid_models,
             "provedor openrouter configurado"
         );
+    }
+    if let Some(key) = crate::config::api_key("ANTHROPIC_API_KEY", &file_env) {
+        registry.register(
+            Arc::new(AnthropicProvider::new(key, config.allow_paid_models)),
+            config.rpm("anthropic"),
+        );
+        tracing::info!(
+            allow_paid_models = config.allow_paid_models,
+            "provedor anthropic configurado (sem tier gratuito — requer allow_paid_models=true para uso)"
+        );
+    }
+    // Claude Code CLI local (sem chave: usa a assinatura já autenticada do
+    // usuário). Agência na máquina em modo "sem shell": lê/edita arquivos,
+    // skills e web pré-aprovados; Bash negado pelo gate do próprio CLI.
+    if let Some(p) = teamwork_providers::ClaudeCodeProvider::detect() {
+        registry.register(Arc::new(p), config.rpm("claude-code"));
+        tracing::info!("provedor claude-code configurado (CLI local, agência sem shell)");
     }
     registry
 }

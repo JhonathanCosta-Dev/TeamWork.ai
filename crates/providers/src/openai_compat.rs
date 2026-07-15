@@ -335,6 +335,53 @@ impl AiProvider for OpenAiCompatProvider {
         Ok(models)
     }
 
+    async fn transcribe(
+        &self,
+        audio: Vec<u8>,
+        language: Option<&str>,
+    ) -> Result<String, ProviderError> {
+        if !self.capabilities().audio_transcription {
+            return Err(ProviderError::Unsupported {
+                provider: self.id.clone(),
+            });
+        }
+        let part = reqwest::multipart::Part::bytes(audio)
+            .file_name("audio.wav")
+            .mime_str("audio/wav")
+            .map_err(|e| ProviderError::InvalidResponse {
+                provider: self.id.clone(),
+                message: e.to_string(),
+            })?;
+        let mut form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", "whisper-large-v3-turbo")
+            .text("response_format", "json")
+            .text("temperature", "0");
+        if let Some(lang) = language {
+            form = form.text("language", lang.to_string());
+        }
+        let resp = self
+            .request(reqwest::Method::POST, "/audio/transcriptions")
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| self.net_err(e))?;
+        let resp = self.check_response(resp).await?;
+
+        #[derive(Deserialize)]
+        struct WireTranscription {
+            text: String,
+        }
+        let wire: WireTranscription =
+            resp.json()
+                .await
+                .map_err(|e| ProviderError::InvalidResponse {
+                    provider: self.id.clone(),
+                    message: e.to_string(),
+                })?;
+        Ok(wire.text.trim().to_string())
+    }
+
     async fn complete(
         &self,
         request: CompletionRequest,
@@ -431,7 +478,7 @@ impl AiProvider for OpenAiCompatProvider {
                                 let data = data.trim();
                                 if data == "[DONE]" {
                                     return Ok(Some((
-                                        StreamChunk {
+                                        StreamChunk { progress: false,
                                             delta: String::new(),
                                             done: true,
                                         },
@@ -452,7 +499,7 @@ impl AiProvider for OpenAiCompatProvider {
                                         .is_some();
                                     if !delta.is_empty() || done {
                                         return Ok(Some((
-                                            StreamChunk { delta, done },
+                                            StreamChunk { progress: false, delta, done },
                                             (bs, buf, done),
                                         )));
                                     }
@@ -472,7 +519,7 @@ impl AiProvider for OpenAiCompatProvider {
                             }
                             None => {
                                 return Ok(Some((
-                                    StreamChunk {
+                                    StreamChunk { progress: false,
                                         delta: String::new(),
                                         done: true,
                                     },

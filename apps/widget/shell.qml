@@ -23,6 +23,17 @@ ShellRoot {
         backend: backendClient
     }
 
+    // Monitor salvo pode ter sido desconectado (ex: sobrou só uma tela);
+    // nesse caso o widget cai na primeira tela em vez de sumir.
+    readonly property bool savedMonitorConnected: {
+        const screens = Quickshell.screens;
+        for (let i = 0; i < screens.length; i++) {
+            if (screens[i].name === appStore.monitorName)
+                return true;
+        }
+        return false;
+    }
+
     Variants {
         model: Quickshell.screens
 
@@ -34,7 +45,7 @@ ShellRoot {
                 screen: modelData
 
                 // Seleção de monitor: "" = apenas o primeiro da lista.
-                visible: appStore.monitorName === ""
+                visible: (appStore.monitorName === "" || !root.savedMonitorConnected)
                          ? modelData === Quickshell.screens[0]
                          : modelData.name === appStore.monitorName
 
@@ -124,11 +135,22 @@ ShellRoot {
                         }
                     }
 
+                    // UM serviço de voz por painel, ativo SÓ no painel
+                    // visível: o shell cria um painel por monitor, e sem
+                    // esta trava cada monitor abria o próprio microfone
+                    // (vozes e transcrições em dobro/triplo).
+                    VoiceService {
+                        id: voiceSvc
+                        store: appStore
+                        active: panel.visible
+                    }
+
                     FullscreenView {
                         id: fullscreenView
                         anchors.fill: parent
                         visible: appStore.fullscreen
                         store: appStore
+                        voice: voiceSvc
                         screens: Quickshell.screens
                         onExitFullscreen: {
                             appStore.fullscreen = false;

@@ -61,7 +61,7 @@ id_type!(RunId, "run");
 id_type!(MessageId, "msg");
 id_type!(ArtifactId, "artifact");
 
-/// Identificador de provedor ("mock", "gemini", "groq", "openrouter").
+/// Identificador de provedor ("mock", "gemini", "groq", "openrouter", "anthropic").
 pub type ProviderId = String;
 
 /// Artefato produzido por um agente (texto no MVP).

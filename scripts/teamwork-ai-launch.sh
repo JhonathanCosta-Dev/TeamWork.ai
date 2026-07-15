@@ -33,6 +33,14 @@ if ! command -v quickshell >/dev/null 2>&1; then
     exit 1
 fi
 
+# Clicar no atalho SEMPRE resulta em UM widget novo no ar: qualquer widget
+# antigo (instalado OU rodando do repositório via terminal) e pipelines de
+# escuta órfãos são encerrados antes — duplicata de widget = voz e
+# transcrição em dobro.
+pkill -f "quickshell -p .*widget/shell.qml" 2>/dev/null || true
+pkill -f "wake_listener.py" 2>/dev/null || true
+sleep 0.4
+
 SOCK="${XDG_RUNTIME_DIR:-/tmp}/teamwork-ai/teamwork-ai.sock"
 
 # Garante que o daemon esteja no ar: tenta a unidade systemd --user; sem

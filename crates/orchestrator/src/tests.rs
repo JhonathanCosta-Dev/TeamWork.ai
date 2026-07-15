@@ -55,7 +55,10 @@ async fn delete_agent_removes_it_from_storage_and_memory() {
         .any(|a| a["id"] == forge.id.to_string()));
 
     let seen = collect_until(&mut rx, |e| e.event == events::AGENT_DELETED).await;
-    assert_eq!(seen.last().unwrap().agent_id.as_deref(), Some(forge.id.as_str()));
+    assert_eq!(
+        seen.last().unwrap().agent_id.as_deref(),
+        Some(forge.id.as_str())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -228,7 +231,10 @@ async fn retry_after_failure_reconsolidates_final_reply() {
     let seen2 = collect_until(&mut rx, |e| e.event == events::RUN_COMPLETED).await;
     assert_eq!(count(&seen2, events::TASK_COMPLETED), 1);
     let done = seen2.last().unwrap();
-    assert!(done.payload["summary"].as_str().unwrap().contains("simulado"));
+    assert!(done.payload["summary"]
+        .as_str()
+        .unwrap()
+        .contains("simulado"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

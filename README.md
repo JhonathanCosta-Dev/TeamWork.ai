@@ -1,8 +1,8 @@
 # Team Work AI
 
 Uma pequena equipe de agentes de IA trabalhando no seu desktop Linux.
-Daemon em **Rust** orquestra agentes em paralelo (Gemini, Groq, OpenRouter ou
-modo simulado); um widget **Quickshell/QML** mostra os avatares trabalhando,
+Daemon em **Rust** orquestra agentes em paralelo (Gemini, Groq, OpenRouter,
+Anthropic ou modo simulado); um widget **Quickshell/QML** mostra os avatares trabalhando,
 com terminal para delegar tarefas: `@forge implemente esta função`. Cada
 agente tem uma **memória permanente** entre execuções (ativa por padrão,
 sem configuração) — consulta o que já aprendeu antes de responder e pode
@@ -31,6 +31,7 @@ flowchart LR
     GEM[Gemini]
     GROQ[Groq]
     OR[OpenRouter]
+    ANTH[Anthropic]
 
     UI --> BC
     Term --> BC
@@ -42,10 +43,12 @@ flowchart LR
     PROV -->|HTTPS| GEM
     PROV -->|HTTPS| GROQ
     PROV -->|HTTPS| OR
+    PROV -->|HTTPS| ANTH
 ```
 
 Agentes padrão: **Atlas** (coordenador), **Forge** (desenvolvedor),
-**Íris** (pesquisadora), **Sentinel** (revisor). Provedor e modelo são
+**Íris** (pesquisadora), **Sentinel** (revisor), **Jorginho** (tech lead —
+revisor sênior, usa o provedor Anthropic). Provedor e modelo são
 configuráveis por agente, a qualquer momento.
 
 ## Tecnologias
@@ -96,12 +99,14 @@ No terminal do widget (ou via `twctl terminal "…"`):
 
 ```bash
 cp .env.example ~/.config/teamwork-ai/env && chmod 600 ~/.config/teamwork-ai/env
-# edite GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY
+# edite GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY
 systemctl --user restart teamwork-ai-daemon
 ```
 
 Regras de custo: `allow_paid_models = false` por padrão; no OpenRouter apenas
 modelos gratuitos (pricing 0 ou `:free`) são aceitos — sem fallback pago.
+**Anthropic não tem tier gratuito**: exige `allow_paid_models = true` pra ser
+usado de verdade (mesma flag do OpenRouter — ligar uma libera as duas).
 Limites e timeouts em `config/teamwork-ai.example.toml`.
 
 ## Modo mock
@@ -122,7 +127,7 @@ apps/daemon      binários: teamwork-ai-daemon, twctl
 apps/widget      QML (components/ pages/ services/ stores/ theme/)
 crates/protocol  NDJSON v1: requests, responses, eventos
 crates/domain    Agent, Task, Run, mensagens, parser de comandos
-crates/providers AiProvider: mock, gemini, groq, openrouter; retry, rate limit
+crates/providers AiProvider: mock, gemini, groq, openrouter, anthropic; retry, rate limit
 crates/storage   SQLite + migrations (12 tabelas)
 crates/orchestrator  grafo, paralelismo, cancelamento, consolidação
 config/ packaging/ scripts/ docs/ assets/avatars/
@@ -161,9 +166,12 @@ anti-loop entre agentes, cancelamento global. Detalhes: `docs/security.md`.
    correções pelos agentes originais e nova revisão, até `max_reviews`.
 3. ~~Editor de agentes no widget~~ ✅ — criar, editar (nome/função/prompt),
    escolher avatar e ativar/desativar pela aba Agentes.
-4. Secret Service/libsecret para chaves.
-5. Transcrição de áudio (Groq) e entradas multimodais (Gemini).
-6. Frontend para Windows 11 (fora do Quickshell) conversando com o mesmo
+4. ~~Provedor Anthropic + agente Jorginho~~ ✅ — tech lead/revisor sênior
+   (`Capability::Review`, mesmo mecanismo do Sentinel); requer
+   `ANTHROPIC_API_KEY` + `allow_paid_models = true` (sem tier gratuito).
+5. Secret Service/libsecret para chaves.
+6. Transcrição de áudio (Groq) e entradas multimodais (Gemini).
+7. Frontend para Windows 11 (fora do Quickshell) conversando com o mesmo
    daemon Rust — exige trocar o socket Unix por named pipe/TCP local.
 
 ## Documentação
