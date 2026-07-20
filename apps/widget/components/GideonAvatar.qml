@@ -20,20 +20,67 @@ Item {
     property var agent: null
     property bool speaking: false
     property bool listening: false
-    // Humor visual: neutral | thinking | happy | serious
+    // Emoção atual (persistente). Uma das chaves de _emotions abaixo.
     property string mood: "neutral"
     // Modo "descanso de tela": olhar vaga mais amplo.
     property bool idleShow: false
     // Aceito por compatibilidade com chamadas antigas; sem efeito na v3.
     property bool cycleAssemble: true
 
-    // Humor → cor + pesos dos canais de expressão (0..1).
-    readonly property var _moods: ({
-        "neutral":  { color: "#6db8ff", ch: { "browUp": 0.06 } },
-        "thinking": { color: "#ffa95e", ch: { "browUp": 0.55, "browOuterUp": 0.45, "eyeWide": 0.4, "smile": 0.14 } },
-        "happy":    { color: "#7fe08a", ch: { "smile": 0.95, "cheek": 0.55, "eyeSquint": 0.4, "jawOpen": 0.06, "browUp": 0.1 } },
-        "serious":  { color: "#ff5f6e", ch: { "browDown": 0.85, "frown": 0.5, "eyeSquint": 0.35, "jawOpen": 0.04 } }
+    // Catálogo de emoções (spec Jorginho v3). Cada emoção define:
+    //   color: cor do holograma
+    //   g:     olhar de repouso [x, y]  (+x direita, +y baixo; -y = pra cima)
+    //   w:     amplitude do vaguear do olhar (0 fixo … 1 amplo)
+    //   bl:    intervalo de piscar [min, max] em segundos
+    //   hold:  duração ao ser usada como FLASH transiente (s); 0 = persistente
+    //   ret:   emoção pra qual voltar após o flash ("" = volta pro mood atual)
+    //   ch:    pesos dos canais de morph 0..1 (canais assados: blink, browUp,
+    //          browOuterUpL/R, browDown, eyeWide, eyeSquint, smile, cheek,
+    //          frown, jawOpen, lipPress, mouthLeft, mouthRight). blink como
+    //          base = pálpebras caídas; jawOpen é somado pela fala.
+    readonly property var _emotions: ({
+        "neutral":    { color: "#6db8ff", g: [0, 0],       w: 0.5, bl: [2.5, 5.0], hold: 0,   ret: "",          ch: { smile: 0.06, browUp: 0.03 } },
+        "idle":       { color: "#6db8ff", g: [0, 0],       w: 1.0, bl: [3.5, 6.5], hold: 0,   ret: "",          ch: { smile: 0.12, browUp: 0.04 } },
+        "activated":  { color: "#8fd0ff", g: [0, 0],       w: 0.2, bl: [1.4, 3.0], hold: 0.7, ret: "listening", ch: { eyeWide: 0.45, browUp: 0.2, browOuterUpL: 0.5, browOuterUpR: 0.5, smile: 0.25, jawOpen: 0.1 } },
+        "listening":  { color: "#6fd0e0", g: [0, 0],       w: 0.2, bl: [4.0, 7.0], hold: 0,   ret: "",          ch: { browOuterUpL: 0.2, browOuterUpR: 0.2, smile: 0.1 } },
+        "understood": { color: "#8fe0a0", g: [0, 0],       w: 0.3, bl: [2.0, 4.0], hold: 0.8, ret: "listening", ch: { smile: 0.4, browUp: 0.15, browOuterUpL: 0.3, browOuterUpR: 0.3, eyeSquint: 0.3, blink: 0.18 } },
+        "thinking":   { color: "#ffb85e", g: [0.35, -0.32],w: 0.6, bl: [2.8, 5.2], hold: 0,   ret: "",          ch: { browDown: 0.25, eyeSquint: 0.2, lipPress: 0.28, mouthRight: 0.14, cheek: 0.05 } },
+        "searching":  { color: "#ffcf7a", g: [0.5, 0.05],  w: 1.0, bl: [2.5, 4.5], hold: 0,   ret: "",          ch: { browOuterUpL: 0.3, browOuterUpR: 0.3, eyeWide: 0.1 } },
+        "speaking":   { color: "#7fc8ff", g: [0, 0],       w: 0.35,bl: [2.5, 4.5], hold: 0,   ret: "",          ch: { smile: 0.12, browOuterUpL: 0.1, browOuterUpR: 0.1 } },
+        "asking":     { color: "#7fd0e8", g: [0, 0],       w: 0.15,bl: [2.5, 4.5], hold: 0,   ret: "",          ch: { browUp: 0.15, browOuterUpL: 0.4, browOuterUpR: 0.4, eyeWide: 0.25, smile: 0.15 } },
+        "uncertain":  { color: "#e0c060", g: [0.15, 0.05], w: 0.5, bl: [2.5, 4.5], hold: 0,   ret: "",          ch: { browOuterUpR: 0.55, browDown: 0.12, lipPress: 0.3, mouthRight: 0.18, eyeSquint: 0.1 } },
+        "confused":   { color: "#e0a860", g: [0.2, 0.1],   w: 0.7, bl: [2.0, 4.0], hold: 0,   ret: "",          ch: { browDown: 0.4, browOuterUpR: 0.4, eyeSquint: 0.2, jawOpen: 0.07, frown: 0.14, lipPress: 0.12 } },
+        "happy":      { color: "#7fe08a", g: [0, 0],       w: 0.4, bl: [3.0, 5.5], hold: 0,   ret: "",          ch: { smile: 0.7, cheek: 0.5, eyeSquint: 0.35, browUp: 0.05 } },
+        "excited":    { color: "#6fe870", g: [0, 0],       w: 0.4, bl: [1.5, 3.0], hold: 0,   ret: "",          ch: { smile: 0.9, cheek: 0.6, eyeWide: 0.4, browUp: 0.2, browOuterUpL: 0.4, browOuterUpR: 0.4, jawOpen: 0.1 } },
+        "concerned":  { color: "#ffa860", g: [0, 0.05],    w: 0.4, bl: [3.5, 6.5], hold: 0,   ret: "",          ch: { browUp: 0.6, browDown: 0.14, frown: 0.35, lipPress: 0.2 } },
+        "empathetic": { color: "#9fb0e8", g: [0, 0.05],    w: 0.3, bl: [4.0, 7.0], hold: 0,   ret: "",          ch: { browUp: 0.4, eyeSquint: 0.15, smile: 0.08, blink: 0.12 } },
+        "serious":    { color: "#ff8a6e", g: [0, 0],       w: 0.2, bl: [4.0, 7.0], hold: 0,   ret: "",          ch: { browDown: 0.3, eyeSquint: 0.1 } },
+        "alert":      { color: "#ff6f5e", g: [0, 0],       w: 0.15,bl: [4.5, 7.5], hold: 0,   ret: "",          ch: { eyeWide: 0.5, browDown: 0.2, browUp: 0.15, lipPress: 0.1 } },
+        "apologizing":{ color: "#b0a0e0", g: [0, 0.12],    w: 0.3, bl: [3.5, 6.0], hold: 2.0, ret: "neutral",   ch: { browUp: 0.55, frown: 0.2, blink: 0.15, smile: 0.05 } },
+        "success":    { color: "#7fe090", g: [0, 0],       w: 0.4, bl: [2.0, 4.0], hold: 1.4, ret: "idle",      ch: { smile: 0.75, cheek: 0.55, browUp: 0.2, browOuterUpL: 0.4, browOuterUpR: 0.4, eyeSquint: 0.3 } },
+        "error":      { color: "#ff5f6e", g: [0, 0.05],    w: 0.3, bl: [3.5, 6.5], hold: 2.5, ret: "neutral",   ch: { browDown: 0.4, browUp: 0.2, eyeSquint: 0.25, frown: 0.3, lipPress: 0.25 } }
     })
+
+    // Estado do flash transiente (reação momentânea que volta pro mood).
+    property string _flash: ""
+    property real _flashHold: 0
+    // Olhar de repouso + amplitude do vaguear (definidos pela emoção atual).
+    property real _baseGazeX: 0
+    property real _baseGazeY: 0
+    property real _wander: 0.5
+    property real _blinkMin: 2.5
+    property real _blinkMax: 5.0
+
+    // Mostra uma emoção por um instante (a duração `hold` dela) e depois volta
+    // sozinho pro mood atual. Usado pra reações momentâneas (ativação,
+    // "entendi", tarefa concluída, erro).
+    function flash(name) {
+        if (!root._emotions[name])
+            return;
+        root._flash = name;
+        root._flashHold = root._emotions[name].hold > 0 ? root._emotions[name].hold : 1.0;
+        _applyEmotion();
+    }
 
     // --- dados decodificados ---
     property var _pos: null       // Float32Array (count*3), normalizado [-1,1]
@@ -72,10 +119,9 @@ Item {
 
     readonly property int _levels: 16
 
-    onMoodChanged: _applyMood()
-    onVisibleChanged: if (visible) _last = 0
-
-    property real _last: 0
+    // Mudou o mood: reaplica só se não houver flash no ar (o flash reaplica
+    // sozinho quando termina).
+    onMoodChanged: if (root._flash.length === 0) _applyEmotion()
 
     Component.onCompleted: {
         _buildPalette();
@@ -183,21 +229,29 @@ Item {
         root._bcount = new Int32Array(root._levels);
 
         root._ready = true;
-        _applyMood();
+        _applyEmotion();
         canvas.requestPaint();
     }
 
     // ------------------------------------------------------------------
-    // Humor / paleta
+    // Emoção / paleta
     // ------------------------------------------------------------------
-    function _applyMood() {
-        const m = root._moods[root.mood] || root._moods["neutral"];
-        root._colorHex = m.color;
+    // Aplica a emoção exibida (flash se houver, senão o mood): cor, olhar de
+    // repouso, amplitude do vaguear, taxa de piscar e alvos dos canais.
+    function _applyEmotion() {
+        const name = root._flash.length > 0 ? root._flash : root.mood;
+        const e = root._emotions[name] || root._emotions["neutral"];
+        root._colorHex = e.color;
         _buildPalette();
+        root._baseGazeX = e.g[0];
+        root._baseGazeY = e.g[1];
+        root._wander = e.w;
+        root._blinkMin = e.bl[0];
+        root._blinkMax = e.bl[1];
         if (!root._ready)
             return;
-        for (const name of root._morphNames)
-            root._cur[name].tgt = (m.ch[name] !== undefined ? m.ch[name] : 0);
+        for (const ch of root._morphNames)
+            root._cur[ch].tgt = (e.ch[ch] !== undefined ? e.ch[ch] : 0);
     }
 
     function _buildPalette() {
@@ -229,7 +283,7 @@ Item {
     // ~22fps ocioso — segura a CPU com a malha densa (9000 pontos) sem perder
     // fluidez quando importa.
     Timer {
-        interval: (root.speaking || root.listening || root.idleShow) ? 33 : 45
+        interval: (root.speaking || root.listening) ? 33 : 45
         running: root.visible && root._ready
         repeat: true
         onTriggered: {
@@ -260,20 +314,32 @@ Item {
             // Pontos menores com a malha densa (9000) → definição mais fina.
             const dotSize = Math.max(1, Math.round(R * 0.011));
 
-            // -- comportamento: piscar, olhar (saccades), fala --
+            // -- flash transiente: conta o tempo e volta pro mood ao expirar --
+            if (root._flash.length > 0) {
+                root._flashHold -= dt;
+                if (root._flashHold <= 0) {
+                    root._flash = "";
+                    root._applyEmotion();
+                }
+            }
+
+            // -- comportamento: piscar (taxa da emoção), olhar (repouso da
+            //    emoção + vaguear), fala --
             root._blinkT += dt;
             if (root._blinkT > root._nextBlink) {
                 root._blinkT = 0;
-                root._nextBlink = 2 + Math.random() * 4;
+                root._nextBlink = root._blinkMin
+                                + Math.random() * (root._blinkMax - root._blinkMin);
             }
             const blinkEnv = Math.max(0, 1 - Math.abs(root._blinkT - 0.07) / 0.07);
 
             root._nextSaccade -= dt;
             if (root._nextSaccade < 0) {
-                const amp = root.idleShow ? 1.0 : 0.6;
+                // Vaguear em torno do olhar de repouso da emoção; idleShow amplia.
+                const amp = root._wander * (root.idleShow ? 1.5 : 1.0);
                 root._nextSaccade = 1.5 + Math.random() * 4;
-                root._gazeTX = (Math.random() - 0.5) * 0.5 * amp;
-                root._gazeTY = (Math.random() - 0.5) * 0.24 * amp;
+                root._gazeTX = root._baseGazeX + (Math.random() - 0.5) * 0.5 * amp;
+                root._gazeTY = root._baseGazeY + (Math.random() - 0.5) * 0.24 * amp;
             }
             root._gazeX = root._damp(root._gazeX, root._gazeTX, 3, dt);
             root._gazeY = root._damp(root._gazeY, root._gazeTY, 3, dt);
@@ -325,7 +391,14 @@ Item {
             bcount.fill(0);
             const nor = root._nor, ao = root._ao, tw = root._twinkle;
 
-            for (let i = 0; i < N; i++) {
+            // Densidade adaptativa ao tamanho: o holograma pequeno usa ~9000
+            // (leve); em tela cheia / descanso de tela cresce até usar TODOS os
+            // pontos (definição máxima). Amostragem por passo uniforme.
+            const renderN = Math.min(N, Math.max(9000, Math.round(R * 42)));
+            const stepN = N / renderN;
+
+            for (let kk = 0; kk < renderN; kk++) {
+                const i = (kk * stepN) | 0;
                 const i3 = i * 3;
                 const x = work[i3], y = work[i3 + 1], z = work[i3 + 2];
                 let X = x * cyw + z * syw;

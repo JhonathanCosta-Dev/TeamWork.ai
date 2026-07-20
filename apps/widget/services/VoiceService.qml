@@ -24,7 +24,7 @@ Item {
 
     // Humor da resposta falada: "serious" (vermelho) quando o texto aponta
     // problema/correção; "happy" (verde) quando é resposta tranquila.
-    property string speakMood: "happy"
+    property string speakMood: "speaking"
 
     // Ativação por voz ("fala jorginho"), estilo OK Google. Desliga sozinha
     // se o setup local (scripts/setup-wakeword.sh) não estiver presente.
@@ -334,7 +334,9 @@ Item {
         return s;
     }
 
-    // Heurística leve: a resposta menciona problema/erro/correção?
+    // Emoção da FALA a partir do sentimento do texto (mapeia pro catálogo v3
+    // do avatar). Problema/erro → preocupado/sério; positivo → feliz;
+    // pergunta ao usuário → perguntando; caso geral → falando (neutro).
     function _moodFromText(text) {
         const t = text.toLowerCase();
         const bad = ["erro", "bug", "problema", "falha", "falhou", "corrig",
@@ -342,8 +344,17 @@ Item {
                      "incorreto", "inválid", "conflito", "crítico"];
         for (const w of bad)
             if (t.indexOf(w) !== -1)
-                return "serious";
-        return "happy";
+                return "concerned";
+        const good = ["pronto", "concluí", "conclui", "sucesso", "funcionou",
+                      "ótimo", "otimo", "perfeito", "resolvido", "feito",
+                      "consegui", "boa"];
+        for (const w of good)
+            if (t.indexOf(w) !== -1)
+                return "happy";
+        // Termina perguntando algo ao usuário?
+        if (t.trim().endsWith("?"))
+            return "asking";
+        return "speaking";
     }
 
     function speak(text) {

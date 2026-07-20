@@ -48,21 +48,24 @@ Rectangle {
             || s === "communicating" || s === "reviewing";
     }
 
-    // Humor visual do holograma: laranja pensando, verde concluído,
-    // vermelho erro/correção, azul em repouso.
+    // Emoção do holograma a partir do STATUS do agente (Jorginho). Mapeia cada
+    // estado do trabalho pra uma emoção do catálogo v3.
     readonly property string hologramMood: {
         const a = root.hologramAgent;
         if (a === null)
-            return "neutral";
-        const s = a.status;
-        if (s === "planning" || s === "working" || s === "communicating"
-                || s === "reviewing" || s === "waiting")
-            return "thinking";
-        if (s === "completed")
-            return "happy";
-        if (s === "error" || s === "cancelled")
-            return "serious";
-        return "neutral";
+            return "idle";
+        switch (a.status) {
+        case "planning":      return "thinking";
+        case "working":       return "thinking";
+        case "communicating": return "speaking";
+        case "reviewing":     return "serious";   // revisando = concentrado/atento
+        case "waiting":       return "thinking";
+        case "completed":     return "success";
+        case "error":         return "error";
+        case "cancelled":     return "concerned";
+        case "paused":        return "neutral";
+        default:              return "idle";       // ocioso = aguardando o usuário
+        }
     }
 
     Column {
@@ -215,13 +218,40 @@ Rectangle {
                         // CPU — só o grande do overlay anima).
                         visible: !root.screensaver
                         agent: root.hologramAgent
-                        // Falando a resposta, a cor vem do conteúdo dela
-                        // (verde ok / vermelho achou problema).
-                        mood: voice.phase === "speaking" ? voice.speakMood
-                                                         : root.hologramMood
+                        // A emoção segue: a fase de voz (falando/escutando/
+                        // pensando) tem prioridade; senão, o status do agente.
+                        // Reações momentâneas (ativação, "entendi", concluído,
+                        // erro) entram por hologram.flash(...) nas Connections.
+                        mood: voice.phase === "speaking"      ? voice.speakMood
+                            : voice.phase === "listening"     ? "listening"
+                            : voice.phase === "transcribing"  ? "understood"
+                            : voice.phase === "waiting"       ? "thinking"
+                                                              : root.hologramMood
                         cycleAssemble: root.store.hologramCycle
                         speaking: root.hologramSpeaking || voice.phase === "speaking"
                         listening: voice.phase === "listening"
+                    }
+
+                    // Reações momentâneas → flash de emoção que volta sozinho.
+                    Connections {
+                        target: voice
+                        function onPhaseChanged() {
+                            if (voice.phase === "listening" && voice._wakeActive)
+                                hologram.flash("activated");   // acordou pelo nome
+                        }
+                    }
+                    Connections {
+                        target: root.store
+                        function onTerminalUpdated() {
+                            const ls = root.store.terminalLines;
+                            if (ls.length === 0)
+                                return;
+                            const last = ls[ls.length - 1];
+                            if (last.kind === "error")
+                                hologram.flash("error");
+                            else if (last.kind === "reply" && (last.detail ?? "").length > 0)
+                                hologram.flash("success");
+                        }
                     }
 
                     // Estado da conversa por voz (ouvindo/pensando/falando/erro).
@@ -454,18 +484,20 @@ Rectangle {
         onVisibleChanged: if (visible) saver.forceActiveFocus()
         Keys.onEscapePressed: root.screensaver = false
 
-        property string idleMood: "neutral"
+        property string idleMood: "idle"
 
-        // Troca de expressão espontânea de tempos em tempos (com viés
-        // pro neutro, como alguém observando o ambiente).
+        // Troca de expressão espontânea de tempos em tempos (com viés pro
+        // ocioso/curioso, como alguém observando o ambiente).
         Timer {
             running: saver.visible
             repeat: true
             interval: 8000
             onTriggered: {
-                const moods = ["neutral", "neutral", "happy", "thinking",
-                               "neutral", "serious", "neutral", "happy"];
-                saver.idleMood = moods[Math.floor(Math.random() * moods.length)];
+                const moods = ["idle", "idle", "curious", "thinking",
+                               "idle", "happy", "idle", "empathetic"];
+                const pick = moods[Math.floor(Math.random() * moods.length)];
+                // "curious" não existe no catálogo — usa "searching" no lugar.
+                saver.idleMood = (pick === "curious" ? "searching" : pick);
             }
         }
 
@@ -476,8 +508,8 @@ Rectangle {
             idleShow: true
             cycleAssemble: root.store.hologramCycle
             mood: voice.phase === "speaking" ? voice.speakMood
-                 : (root.hologramMood !== "neutral" ? root.hologramMood
-                                                    : saver.idleMood)
+                 : (root.hologramMood !== "idle" ? root.hologramMood
+                                                 : saver.idleMood)
             speaking: root.hologramSpeaking || voice.phase === "speaking"
             listening: voice.phase === "listening"
         }
