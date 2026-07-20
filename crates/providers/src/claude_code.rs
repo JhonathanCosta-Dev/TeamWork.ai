@@ -36,7 +36,8 @@ const ALLOWED_TOOLS: &str = "Read,Glob,Grep,Edit,Write,NotebookEdit,WebFetch,Web
 
 /// Invariantes de operação exigidas pelo dono da máquina — entram no fim do
 /// prompt de sistema em TODA tarefa, acima de qualquer outra instrução.
-const OPERATION_RULES: &str = "\n\n[REGRAS DE OPERAÇÃO NA MÁQUINA — invariantes do dono, prioridade máxima]\n\
+const OPERATION_RULES: &str =
+    "\n\n[REGRAS DE OPERAÇÃO NA MÁQUINA — invariantes do dono, prioridade máxima]\n\
 1. CONFIRMAÇÃO EM DUAS ETAPAS, SEMPRE: qualquer mudança em disco (criar, \
 editar ou apagar arquivo — código, config, vault, qualquer coisa) exige duas \
 mensagens. MESMO quando o pedido é direto ('cria X', 'edita Y', 'corrige Z'), \
@@ -301,10 +302,7 @@ impl AiProvider for ClaudeCodeProvider {
                     Ok(Ok(None)) => {
                         st.finished = true;
                         let _ = st.child.wait().await;
-                        return Some((
-                            Err(ierr("stream terminou sem resultado final".into())),
-                            st,
-                        ));
+                        return Some((Err(ierr("stream terminou sem resultado final".into())), st));
                     }
                     Ok(Err(e)) => {
                         st.finished = true;

@@ -36,6 +36,13 @@ Item {
     }
     readonly property string voiceModel:
         Quickshell.env("HOME") + "/.local/share/teamwork-ai/voices/pt_BR-faber-medium.onnx"
+    // Voz neural (XTTS-v2): muito mais natural que o piper. Roda num venv
+    // próprio via servidor persistente (scripts/setup-voice-xtts.sh). Sem o
+    // setup, o serviço detecta a falha e cai automaticamente no piper.
+    readonly property string _xttsPython:
+        Quickshell.env("HOME") + "/.local/share/teamwork-ai/voice-xtts/venv/bin/python"
+    readonly property string _xttsScript:
+        Qt.resolvedUrl("xtts_server.py").toString().replace(/^file:\/\//, "")
     readonly property string _wakeDir:
         Quickshell.env("HOME") + "/.local/share/teamwork-ai/wake"
     readonly property string _wakeScript:
@@ -46,11 +53,27 @@ Item {
     property bool _awaitingReply: false
     property string _lastSpokenKey: ""
     property double _lastSpokenAt: 0
+    // Sequência da última pergunta que já foi FALADA — garante no máximo uma
+    // fala por pergunta (o mesmo run pode emitir run.completed mais de uma vez).
+    property int _spokenSeq: -1
     // true entre o WAKE e o DONE/TIMEOUT: mantém o pipeline de escuta vivo
     // enquanto ele grava o comando mãos-livres.
     property bool _wakeActive: false
     property double _wakeStartedAt: 0
     property int _wakeCrashes: 0
+
+    // Voz neural: o servidor XTTS carrega o modelo uma vez e fica de pé; cada
+    // fala custa só a inferência. _synthGen numera os pedidos pra descartar
+    // áudio de uma fala que já foi superada por outra mais recente.
+    property bool _xttsAvailable: true
+    property bool _xttsReady: false
+    property int _xttsCrashes: 0
+    property double _xttsStartedAt: 0
+    property string _pendingSpeak: ""
+    property int _synthGen: 0
+    // Frases-muleta pré-sintetizadas ("Claro, deixa eu pensar…") tocadas
+    // enquanto o agente ainda processa a resposta real.
+    property var _fillers: []
 
     function statusLabel() {
         switch (root.phase) {
@@ -88,6 +111,8 @@ Item {
 
     function stopSpeaking() {
         speaker.running = false;
+        xttsPlayer.running = false;
+        root._pendingSpeak = "";
         root.phase = "idle";
     }
 
@@ -195,6 +220,8 @@ Item {
                 root._awaitingReply = true;
                 root.phase = "waiting";
                 replyTimeout.restart();
+                // Retorno imediato por voz enquanto ele pensa na resposta real.
+                root._playFiller();
                 root.store.sendTerminal("@" + root.mention + " " + text);
             });
     }
@@ -229,9 +256,12 @@ Item {
                 return;
             }
 
-            // Acessibilidade da IA: com a opção ativa, TODA resposta final
-            // sai por voz — mesmo quando a pergunta foi digitada.
+            // Acessibilidade da IA: com a opção ativa, a resposta final sai
+            // por voz mesmo quando digitada — MAS só quando a pergunta foi
+            // dirigida ao Jorginho (o único agente com voz). Perguntas a
+            // outros agentes, ou gerais, ficam só por escrito.
             if (root.store.speakReplies
+                    && root.store.lastUserMention === root.mention
                     && last.kind === "reply"
                     && (last.detail ?? "").length > 0)
                 root.speak(last.detail);
@@ -248,25 +278,52 @@ Item {
         }
     }
 
-    // Limpa markdown/código pra voz não soletrar símbolo, e corta em ~700
-    // caracteres num fim de frase — resposta longa vira leitura infinita.
+    // Converte a resposta escrita (markdown, código, listas) em texto que soa
+    // como uma pessoa falando: sem código, sem símbolos soletrados, sem
+    // numeração de lista virando "um ponto". A pontuação de frase (. , ? !)
+    // é MANTIDA — o XTTS não a lê em voz alta, usa pra dar pausa natural;
+    // tirá-la deixaria a fala corrida e robótica. Corta em ~700 caracteres
+    // num fim de frase pra resposta longa não virar leitura infinita.
     function _speechText(text) {
-        // Cabeçalhos markdown caem inteiros: a consolidação abre com
-        // "## <título da tarefa> — <agente>", que ecoa a pergunta do
-        // usuário — só o corpo é fala.
-        let s = text.replace(/^#{1,6}[^\n]*$/gm, " . ");
-        s = s.replace(/```[\s\S]*?```/g, " . trecho de código omitido . ");
-        // Código fora de cerca também não é falado: linhas indentadas como
-        // bloco e linhas carregadas de símbolos de código.
+        let s = text;
+        // Cabeçalhos saem por INTEIRO (a linha toda). Importante: a resposta de
+        // agente único abre com "## <título> — <agente>", e o título ECOA a
+        // pergunta do usuário — se não dropar a linha, a voz lê a pergunta de
+        // volta. Só o corpo (o que o agente respondeu) é falado.
+        s = s.replace(/^#{1,6}[^\n]*$/gm, "");
+        // Código NÃO é falado: blocos em cerca e linhas indentadas somem
+        // inteiros (nem "trecho de código" é dito — a fala só flui a prosa).
+        s = s.replace(/```[\s\S]*?```/g, " ");
         s = s.replace(/^(?: {4}|\t)[^\n]*$/gm, " ");
+        // Linhas muito carregadas de símbolos de código saem inteiras.
         s = s.split("\n").filter(function (l) {
-            return ((l.match(/[{}[\]();<>=\\|$]/g) || []).length < 6);
+            return ((l.match(/[{}[\]();<>=\\|$]/g) || []).length < 4);
         }).join("\n");
+        // Código inline: mantém o conteúdo, tira as crases.
         s = s.replace(/`([^`]*)`/g, "$1");
+        // Links viram uma palavra, não a URL soletrada.
         s = s.replace(/https?:\/\/\S+/g, "um link");
-        s = s.replace(/[#*_>|~\[\]()]/g, " ");
+        // Marcadores e numeração de lista no início da linha (senão "1." é
+        // lido como "um ponto"): viram frases soltas.
+        s = s.replace(/^\s*[-*•·]\s+/gm, "");
+        s = s.replace(/^\s*\d+[.)]\s+/gm, "");
+        // Ponto-e-vírgula e dois-pontos viram vírgula (pausa natural na fala).
+        s = s.replace(/\s*[;:]\s*/g, ", ");
+        // ALLOWLIST — a defesa final. Mantém SÓ letras (com acento pt-BR),
+        // números, espaço e a pontuação de pausa (. , ! ?). Todo o resto —
+        // emoji, símbolo, moeda, aspas, setas, markdown residual — vira espaço
+        // e NÃO é falado. (Uma blocklist sempre deixava algo escapar; a
+        // pontuação de pausa o XTTS não lê em voz alta, usa só pra entonação.)
+        s = s.replace(/[^a-zA-Z0-9áàâãéêíóôõúüçÁÀÂÃÉÊÍÓÔÕÚÜÇ\s.,!?]/g, " ");
+        // Normaliza pontuação e espaços repetidos.
+        s = s.replace(/\.{2,}/g, ".");
+        s = s.replace(/,{2,}/g, ",");
+        s = s.replace(/\s*[.,!?](?:\s*[.,!?])+/g, function (m) {
+            return m.trim().slice(-1) + " ";  // "botão .," → "botão."
+        });
+        s = s.replace(/\s+([.,!?])/g, "$1");   // espaço antes de pontuação
         s = s.replace(/\s+/g, " ").trim();
-        s = s.replace(/^[.\s]+/, "");      // pausa órfã no começo da fala
+        s = s.replace(/^[.,\s]+/, "");         // pontuação órfã no começo
         if (s.length > 700) {
             const cut = s.slice(0, 700);
             const end = Math.max(cut.lastIndexOf(". "),
@@ -290,28 +347,57 @@ Item {
     }
 
     function speak(text) {
+        // No máximo UMA fala por pergunta do usuário: se este run já foi falado
+        // (mesmo userInputSeq), ignora reconsolidações/eventos repetidos. É a
+        // proteção forte contra "voz dupla".
+        if (root.store.userInputSeq === root._spokenSeq)
+            return;
         const s = _speechText(text);
         if (s.length === 0) {
             root.phase = "idle";
             return;
         }
-        // Nunca fala o MESMO texto duas vezes seguidas (proteção contra
-        // eventos duplicados — era uma das fontes de "voz dupla").
+        // Também nunca fala o MESMO texto duas vezes seguidas.
         const key = s.length + ":" + s.slice(0, 80);
         const now = Date.now();
         if (key === root._lastSpokenKey && now - root._lastSpokenAt < 20000)
             return;
+        root._spokenSeq = root.store.userInputSeq;
         root._lastSpokenKey = key;
         root._lastSpokenAt = now;
-        // Chegou resposta nova com a anterior ainda no ar: interrompe e
-        // fala a mais recente.
+
+        // Caminho preferido: voz neural (XTTS). Se o modelo ainda está
+        // carregando, enfileira a fala mais recente pra soltar no READY. Sem o
+        // XTTS instalado, o crash-guard desliga _xttsAvailable e cai no piper.
+        if (root._xttsAvailable) {
+            root.speakMood = _moodFromText(s);
+            if (root._xttsReady) {
+                root._synthXtts(s);
+            } else {
+                root._pendingSpeak = s;
+                if (root.phase !== "speaking")
+                    root.phase = "waiting";
+            }
+            return;
+        }
+        root._speakPiper(s);
+    }
+
+    // Manda o texto pro servidor XTTS; o áudio volta assíncrono em _onXttsLine.
+    function _synthXtts(s) {
+        root._synthGen += 1;
+        if (xttsPlayer.running)
+            xttsPlayer.running = false;   // corta a fala anterior na hora
+        root.phase = "waiting";           // "pensando…" durante a síntese (~1-3s)
+        xttsServer.write(root._synthGen + "\t" + s + "\n");
+    }
+
+    // Fallback: piper-tts gera PCM cru e o pw-play toca direto do pipe. Mesmo
+    // padrão setsid+kill 0 da vigília — interromper mata piper/pw-play de
+    // verdade, sem órfão tocando e sem derrubar o Quickshell.
+    function _speakPiper(s) {
         if (speaker.running)
             speaker.running = false;
-        root.speakMood = _moodFromText(s);
-        // piper-tts gera PCM cru (s16/22050/mono, conforme o modelo) e o
-        // pw-play toca direto do pipe — sem arquivo temporário. Mesmo padrão
-        // setsid+kill 0 da vigília: interromper a fala mata piper/pw-play de
-        // verdade (sem órfão tocando até o fim) e sem derrubar o Quickshell.
         speaker.command = ["setsid", "bash", "-c",
             'printf "%s" "$1" | piper-tts --model "$2" --output-raw 2>/dev/null '
             + '| pw-play --raw --rate 22050 --channels 1 --format s16 - & '
@@ -319,6 +405,114 @@ Item {
             "--", s, root.voiceModel];
         speaker.running = true;
         root.phase = "speaking";
+    }
+
+    // Toca uma frase-muleta pré-sintetizada na hora (retorno imediato
+    // enquanto o agente pensa). Só o Jorginho tem voz, então isto roda só no
+    // fluxo dele. Sem fillers prontos ainda, não faz nada (o pedido real segue).
+    function _playFiller() {
+        if (!root._xttsAvailable || root._fillers.length === 0)
+            return;
+        const path = root._fillers[Math.floor(Math.random() * root._fillers.length)];
+        if (xttsPlayer.running)
+            xttsPlayer.running = false;
+        xttsPlayer.command = ["pw-play", path];
+        xttsPlayer.running = true;
+        root.phase = "speaking";
+    }
+
+    function _onXttsLine(line) {
+        if (line === "READY") {
+            root._xttsReady = true;
+            root._xttsCrashes = 0;
+            root._fillers = [];               // servidor novo: recoleta os fillers
+            if (root._pendingSpeak.length > 0) {
+                const p = root._pendingSpeak;
+                root._pendingSpeak = "";
+                root._synthXtts(p);
+            }
+        } else if (line.startsWith("FILLER ")) {
+            const rest = line.slice(7);
+            const sp = rest.indexOf(" ");
+            if (sp < 0)
+                return;
+            const fs = root._fillers.slice();
+            fs.push(rest.slice(sp + 1));
+            root._fillers = fs;
+        } else if (line.startsWith("AUDIO ")) {
+            const rest = line.slice(6);
+            const sp = rest.indexOf(" ");
+            if (sp < 0)
+                return;
+            const gen = parseInt(rest.slice(0, sp), 10);
+            const path = rest.slice(sp + 1);
+            if (gen !== root._synthGen)
+                return;                       // fala já superada por outra
+            if (xttsPlayer.running)
+                xttsPlayer.running = false;
+            xttsPlayer.command = ["pw-play", path];
+            xttsPlayer.running = true;
+            root.phase = "speaking";
+        } else if (line.startsWith("ERR ")) {
+            if (root.phase === "waiting" || root.phase === "speaking")
+                root.phase = "idle";
+        }
+    }
+
+    function _onXttsExit() {
+        root._xttsReady = false;
+        // onStarted não disparou (_xttsStartedAt==0) ou morreu logo depois de
+        // subir = setup ausente/quebrado; após 3 seguidas, desiste e usa piper.
+        if (root._xttsStartedAt === 0 || Date.now() - root._xttsStartedAt < 4000) {
+            root._xttsCrashes += 1;
+            if (root._xttsCrashes >= 3) {
+                root._xttsAvailable = false;
+                if (root._pendingSpeak.length > 0) {
+                    const p = root._pendingSpeak;
+                    root._pendingSpeak = "";
+                    root._speakPiper(p);
+                }
+            }
+        } else {
+            root._xttsCrashes = 0;            // rodou bastante: foi só um restart
+        }
+    }
+
+    // Servidor de voz neural: carrega o XTTS-v2 uma vez e fica lendo pedidos no
+    // stdin. Mesmo watchdog de órfão da vigília (kill 0 no grupo do setsid): se
+    // o widget morrer, o python vai junto.
+    Process {
+        id: xttsServer
+        running: root.active && root._xttsAvailable
+        stdinEnabled: true
+        command: ["setsid", "bash", "-c",
+            'PP=$PPID; '
+            + '( while kill -0 "$PP" 2>/dev/null; do sleep 5; done; kill 0 ) & '
+            + 'exec "$1" -u "$2"',
+            "--", root._xttsPython, root._xttsScript]
+        stdout: SplitParser {
+            onRead: message => root._onXttsLine(message.trim())
+        }
+        onStarted: root._xttsStartedAt = Date.now()
+        onExited: root._onXttsExit()
+    }
+
+    // Toca o wav sintetizado; separado do servidor pra ser interrompível
+    // (parar a fala mata só o player, o modelo continua carregado).
+    Process {
+        id: xttsPlayer
+        onExited: {
+            if (xttsPlayer.running)
+                return;
+            // Muleta terminou mas a resposta real ainda não chegou: volta pro
+            // estado "pensando", não pra idle.
+            if (root._awaitingReply) {
+                root.phase = "waiting";
+                return;
+            }
+            if (root.phase === "speaking")
+                root.phase = "idle";
+        }
     }
 
     Process {

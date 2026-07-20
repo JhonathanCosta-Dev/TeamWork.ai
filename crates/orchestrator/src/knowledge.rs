@@ -157,7 +157,9 @@ pub fn vault_notes_on_demand(root: &std::path::Path, message: &str) -> Option<St
         if let Some(body) = read_capped(&p, VAULT_NOTE_CAP) {
             out.push_str(&format!(
                 "--- {} ---\n{}\n\n",
-                p.file_name().map(|f| f.to_string_lossy()).unwrap_or_default(),
+                p.file_name()
+                    .map(|f| f.to_string_lossy())
+                    .unwrap_or_default(),
                 body
             ));
         }

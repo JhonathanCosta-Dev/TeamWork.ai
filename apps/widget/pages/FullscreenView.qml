@@ -82,30 +82,51 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 12
 
-                Text {
-                    text: "Team Work AI"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 22
-                    font.bold: true
+                Image {
+                    anchors.verticalCenter: parent.verticalCenter
+                    source: "../assets/team-work-ai-logo.svg"
+                    height: 32
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.height: 64
+                    smooth: true
                 }
+                // Pílula de status (verde "equipe pronta" / vermelho offline).
                 Rectangle {
-                    width: 10
-                    height: 10
-                    radius: 5
                     anchors.verticalCenter: parent.verticalCenter
-                    color: root.store.online ? Theme.success : Theme.danger
-                }
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.store.online
-                          ? (root.store.activeTasks > 0
-                             ? root.store.activeTasks + " tarefa(s) em andamento"
-                             : "equipe pronta")
-                          : "daemon offline"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize
+                    height: 24
+                    width: pillRow.implicitWidth + 20
+                    radius: 12
+                    color: root.store.online ? Qt.alpha(Theme.success, 0.15)
+                                             : Qt.alpha(Theme.danger, 0.15)
+                    border.width: 1
+                    border.color: root.store.online ? Qt.alpha(Theme.success, 0.5)
+                                                     : Qt.alpha(Theme.danger, 0.5)
+
+                    Row {
+                        id: pillRow
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Rectangle {
+                            width: 8
+                            height: 8
+                            radius: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: root.store.online ? Theme.success : Theme.danger
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.store.online
+                                  ? (root.store.activeTasks > 0
+                                     ? root.store.activeTasks + " tarefa(s) em andamento"
+                                     : "equipe pronta")
+                                  : "daemon offline"
+                            color: root.store.online ? Theme.success : Theme.danger
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.bold: true
+                        }
+                    }
                 }
             }
 
@@ -263,11 +284,14 @@ Rectangle {
                 height: parent.height
                 spacing: 12
 
-                // Palco: fileira de avatares + barra de fala única embaixo.
+                // Palco antigo (fileira grande de avatares) — substituído pela
+                // "Fluxo ao vivo" compacta dentro do TerminalPanel. Mantido
+                // invisível/altura 0 pra não reescrever o bloco inteiro.
                 Rectangle {
                     id: stage
+                    visible: false
                     width: parent.width
-                    height: 196
+                    height: 0
                     radius: Theme.radius
                     color: Theme.surface
                     border.width: 1
@@ -408,6 +432,7 @@ Rectangle {
                     store: root.store
                     showLabel: false
                     showTaskTabs: true
+                    showFlow: true
                     listHeight: centerCol.height - stage.height - 12 - 46 - 12
                 }
             }

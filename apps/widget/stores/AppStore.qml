@@ -17,9 +17,22 @@ Item {
     property string currentPage: "agents"   // agents | tasks | settings
     // Holograma da tela cheia: desmontar/remontar as partículas em ciclo.
     property bool hologramCycle: true
-    // Acessibilidade da IA: toda resposta final também sai por voz,
-    // mesmo quando a pergunta foi digitada.
+    // Acessibilidade da IA: quando a pergunta foi dirigida ao Jorginho (o
+    // único agente com voz), a resposta final também sai por voz — mesmo
+    // quando digitada. Outros agentes respondem só por escrito.
     property bool speakReplies: false
+    // Menção (@agente) da última pergunta do usuário, normalizada em
+    // minúsculas. "" quando foi uma pergunta geral (sem @). Usado pra decidir
+    // se a resposta final deve ser falada (só o Jorginho fala).
+    property string lastUserMention: ""
+    // Incrementa a cada pergunta do usuário. A voz fala no máximo UMA vez por
+    // pergunta (evita voz dupla quando o mesmo run emite mais de um
+    // run.completed — ex.: reconsolidação após retry).
+    property int userInputSeq: 0
+    // Pedido pendente de abrir aplicativo (app.open_request): { request_id,
+    // app, args, agent }. Enquanto != null, um banner de confirmação aparece.
+    // Nada é executado até o usuário aprovar. null = sem pedido.
+    property var pendingApp: null
 
     // Dados
     property var agents: []
@@ -216,6 +229,29 @@ Item {
             _pushTerminal("event", "🧠 " + (ev.payload.agent_name ?? "agente")
                           + " consultou a memória antes de responder", "");
             break;
+        case "web.searched":
+            _pushTerminal("event", "🔎 " + (ev.payload.agent_name ?? "agente")
+                          + (ev.payload.kind === "clima" ? " consultou o clima: " : " buscou na internet: ")
+                          + (ev.payload.query ?? ""), "");
+            break;
+        case "app.open_request":
+            // Pedido de abrir app: NÃO abre — mostra a confirmação (banner).
+            root.pendingApp = {
+                request_id: ev.payload.request_id ?? "",
+                app: ev.payload.app ?? "",
+                args: ev.payload.args ?? "",
+                agent: ev.payload.agent_name ?? "agente"
+            };
+            break;
+        case "app.opened":
+            root.pendingApp = null;
+            _pushTerminal("event", "🚀 Abri o aplicativo: " + (ev.payload.app ?? ""), "");
+            break;
+        case "app.open_failed":
+            root.pendingApp = null;
+            _pushTerminal("error", "Não consegui abrir '" + (ev.payload.app ?? "")
+                          + "': " + (ev.payload.error ?? ""), "");
+            break;
         case "provider.model_switched":
             _pushTerminal("event", "🔁 " + (ev.payload.agent_name ?? "agente")
                           + " trocou de modelo automaticamente: " + (ev.payload.from_model ?? "?")
@@ -256,6 +292,11 @@ Item {
         const trimmed = input.trim();
         if (trimmed.length === 0)
             return;
+        // Captura a menção alvo (@agente) pra saber se a resposta deve ser
+        // falada — só o Jorginho tem voz. Sem @, é pergunta geral (sem voz).
+        const m = trimmed.match(/^@(\S+)/);
+        root.lastUserMention = m ? m[1].toLowerCase() : "";
+        root.userInputSeq += 1;
         _pushTerminal("user", trimmed, "");
         backend.call("terminal.input", { input: trimmed }, function (r, err) {
             if (err) {
@@ -301,6 +342,27 @@ Item {
             if (err)
                 root.lastError = err.message;
         });
+    }
+
+    // Abre o app do pedido pendente (usuário aprovou o banner). O daemon só
+    // executa aqui, após esta confirmação explícita.
+    function confirmApp() {
+        if (!root.pendingApp)
+            return;
+        const app = root.pendingApp.app;
+        const args = root.pendingApp.args ?? "";
+        root.pendingApp = null;
+        backend.call("app.open", { app: app, args: args }, function (r, err) {
+            if (err)
+                _pushTerminal("error", "Não consegui abrir '" + app + "': " + err.message, "");
+        });
+    }
+
+    function cancelApp() {
+        if (!root.pendingApp)
+            return;
+        _pushTerminal("event", "Cancelei a abertura de '" + root.pendingApp.app + "'.", "");
+        root.pendingApp = null;
     }
 
     function loadModels(providerId) {

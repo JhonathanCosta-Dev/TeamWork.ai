@@ -249,7 +249,7 @@ Column {
         }
         Text {
             anchors.verticalCenter: parent.verticalCenter
-            text: "Falar todas as respostas por voz (mesmo digitando)"
+            text: "Jorginho lê as respostas dele por voz (mesmo digitando)"
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeSmall
             font.family: Theme.fontFamily
@@ -258,7 +258,7 @@ Column {
 
     Text {
         width: parent.width
-        text: "Com esta opção ativa, toda resposta final da equipe também é lida em voz alta pelo Jorginho — além de aparecer no chat."
+        text: "Com esta opção ativa, quando você fala com o Jorginho (@jorginho ou por voz), a resposta final dele também é lida em voz alta — além de aparecer no chat. Os outros agentes respondem só por escrito."
         color: Theme.textDisabled
         font.pixelSize: Theme.fontSizeSmall
         font.family: Theme.fontFamily

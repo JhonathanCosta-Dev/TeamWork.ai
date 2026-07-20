@@ -71,7 +71,8 @@ QtObject {
         "forge": "#e0af68",
         "iris": "#73daca",
         "sentinel": "#f7768e",
-        "jorginho": "#cc785c"
+        "jorginho": "#cc785c",
+        "speed": "#2ac3de"
     })
     // Paleta pra agentes criados pelo usuário (sem cor fixa conhecida) — cada
     // nome sempre cai na mesma cor (hash determinístico), sem colidir com as

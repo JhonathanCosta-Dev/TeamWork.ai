@@ -183,6 +183,16 @@ pub mod events {
     pub const MEMORY_SAVED: &str = "memory.saved";
     /// Memória (índice/notas) foi injetada no prompt da tarefa (payload: dir).
     pub const MEMORY_RECALLED: &str = "memory.recalled";
+    /// Um agente fez uma busca na internet (payload: kind, query, agent_name).
+    pub const WEB_SEARCHED: &str = "web.searched";
+    /// Um agente pediu pra abrir um aplicativo — AGUARDA confirmação do usuário
+    /// (payload: request_id, app, args, agent_name). Nada é executado até o
+    /// widget chamar `app.open` após o usuário aprovar.
+    pub const APP_OPEN_REQUEST: &str = "app.open_request";
+    /// Aplicativo aberto após confirmação (payload: app).
+    pub const APP_OPENED: &str = "app.opened";
+    /// Falha ao abrir o aplicativo (payload: app, error).
+    pub const APP_OPEN_FAILED: &str = "app.open_failed";
     pub const USAGE_UPDATED: &str = "usage.updated";
     pub const TERMINAL_OUTPUT: &str = "terminal.output";
     pub const ERROR: &str = "error";
@@ -213,6 +223,10 @@ pub mod methods {
     /// Transcreve um arquivo de áudio local (WAV) em texto, via provedor
     /// com suporte a `audio_transcription` (Groq/Whisper).
     pub const VOICE_TRANSCRIBE: &str = "voice.transcribe";
+    /// Abre um aplicativo local. Chamado pelo widget SOMENTE após o usuário
+    /// confirmar um `app.open_request` (params: app, args). O daemon executa
+    /// o processo desanexado e registra o evento.
+    pub const APP_OPEN: &str = "app.open";
     pub const EVENTS_RECENT: &str = "events.recent";
     pub const SETTINGS_GET: &str = "settings.get";
     pub const SETTINGS_SET: &str = "settings.set";

@@ -60,6 +60,20 @@ impl OpenAiCompatProvider {
         )
     }
 
+    /// Servidor local compatível com OpenAI (Ollama, LM Studio, vLLM…) rodando
+    /// na máquina do usuário ou na rede dele. Modelos são descobertos via
+    /// `GET /models` e tratados como gratuitos (rodam no hardware do usuário —
+    /// sem custo, nunca bloqueados por `allow_paid_models`). A chave é só um
+    /// placeholder: servidores locais costumam ignorá-la.
+    pub fn local(base_url: &str, api_key: String) -> Self {
+        let key = if api_key.trim().is_empty() {
+            "local".to_string()
+        } else {
+            api_key
+        };
+        Self::new("local", "Local (self-hosted)", base_url, key, vec![], true)
+    }
+
     pub fn new(
         id: &str,
         name: &str,
@@ -478,7 +492,8 @@ impl AiProvider for OpenAiCompatProvider {
                                 let data = data.trim();
                                 if data == "[DONE]" {
                                     return Ok(Some((
-                                        StreamChunk { progress: false,
+                                        StreamChunk {
+                                            progress: false,
                                             delta: String::new(),
                                             done: true,
                                         },
@@ -499,7 +514,11 @@ impl AiProvider for OpenAiCompatProvider {
                                         .is_some();
                                     if !delta.is_empty() || done {
                                         return Ok(Some((
-                                            StreamChunk { progress: false, delta, done },
+                                            StreamChunk {
+                                                progress: false,
+                                                delta,
+                                                done,
+                                            },
                                             (bs, buf, done),
                                         )));
                                     }
@@ -519,7 +538,8 @@ impl AiProvider for OpenAiCompatProvider {
                             }
                             None => {
                                 return Ok(Some((
-                                    StreamChunk { progress: false,
+                                    StreamChunk {
+                                        progress: false,
                                         delta: String::new(),
                                         done: true,
                                     },
@@ -567,6 +587,32 @@ mod tests {
         // é NÃO ser PaidModelBlocked.
         let req = CompletionRequest {
             model: "vendor/model:free".into(),
+            messages: vec![ChatMessage::user("oi")],
+            max_tokens: None,
+            temperature: None,
+        };
+        let err = p.complete(req).await.unwrap_err();
+        assert!(!matches!(err, ProviderError::PaidModelBlocked { .. }));
+    }
+
+    #[test]
+    fn local_preset_is_free_and_has_placeholder_key() {
+        // URL normalizada (sem barra final), id "local", chave placeholder
+        // quando não informada, e nunca sujeito ao bloqueio de pagos.
+        let p = OpenAiCompatProvider::local("http://192.168.0.42:11434/v1/", String::new());
+        assert_eq!(p.id, "local");
+        assert_eq!(p.base_url, "http://192.168.0.42:11434/v1");
+        assert_eq!(p.api_key, "local");
+        assert!(p.allow_paid_models);
+    }
+
+    #[tokio::test]
+    async fn local_never_blocks_models() {
+        // Servidor local: qualquer modelo passa a política (falha só na rede,
+        // pois não há servidor no teste) — nunca PaidModelBlocked.
+        let p = OpenAiCompatProvider::local("http://127.0.0.1:11434/v1", String::new());
+        let req = CompletionRequest {
+            model: "qwen2.5-coder:14b".into(),
             messages: vec![ChatMessage::user("oi")],
             max_tokens: None,
             temperature: None,

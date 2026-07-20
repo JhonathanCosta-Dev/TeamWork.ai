@@ -23,6 +23,20 @@ pub struct AppState {
     pub started_at: std::time::Instant,
 }
 
+/// Existe um binário com esse nome no PATH (ou é um caminho válido)?
+fn binary_exists(name: &str) -> bool {
+    if name.contains('/') {
+        return std::path::Path::new(name).exists();
+    }
+    std::env::var("PATH")
+        .ok()
+        .map(|path| {
+            path.split(':')
+                .any(|dir| std::path::Path::new(dir).join(name).exists())
+        })
+        .unwrap_or(false)
+}
+
 fn orch_error_code(e: &OrchestratorError) -> i32 {
     match e {
         OrchestratorError::AgentNotFound(_)
@@ -406,6 +420,72 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
             {
                 Ok(text) => Response::ok(id, json!({ "text": text })),
                 Err(e) => Response::err(id, error_codes::PROVIDER_ERROR, e.to_string()),
+            }
+        }
+
+        methods::APP_OPEN => {
+            #[derive(serde::Deserialize)]
+            struct P {
+                app: String,
+                #[serde(default)]
+                args: String,
+            }
+            let p: P = match params(&req) {
+                Ok(p) => p,
+                Err(r) => return r,
+            };
+            let app = p.app.trim().to_string();
+            if app.is_empty() || app.len() > 128 {
+                return Response::err(id, error_codes::INVALID_PARAMS, "app inválido");
+            }
+            // App inexistente = erro claro (o setsid -f mascararia o ENOENT).
+            if !binary_exists(&app) {
+                let msg = format!("aplicativo '{app}' não encontrado no PATH");
+                state
+                    .orchestrator
+                    .emit_public(teamwork_protocol::Event::new(
+                        teamwork_protocol::events::APP_OPEN_FAILED,
+                        json!({ "app": app, "error": "não encontrado" }),
+                    ))
+                    .await;
+                return Response::err(id, error_codes::NOT_FOUND, msg);
+            }
+            // Executa desanexado (setsid -f: sessão própria, sobrevive ao
+            // daemon) com a saída descartada. O usuário já confirmou no widget.
+            let mut cmd = std::process::Command::new("setsid");
+            cmd.arg("-f").arg(&app);
+            if !p.args.trim().is_empty() {
+                cmd.args(p.args.split_whitespace());
+            }
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            match cmd.spawn() {
+                Ok(_) => {
+                    tracing::info!(app = %app, "aplicativo aberto por confirmação do usuário");
+                    state
+                        .orchestrator
+                        .emit_public(teamwork_protocol::Event::new(
+                            teamwork_protocol::events::APP_OPENED,
+                            json!({ "app": app }),
+                        ))
+                        .await;
+                    Response::ok(id, json!({ "ok": true, "app": app }))
+                }
+                Err(e) => {
+                    state
+                        .orchestrator
+                        .emit_public(teamwork_protocol::Event::new(
+                            teamwork_protocol::events::APP_OPEN_FAILED,
+                            json!({ "app": app, "error": e.to_string() }),
+                        ))
+                        .await;
+                    Response::err(
+                        id,
+                        error_codes::INTERNAL,
+                        format!("falha ao abrir '{app}': {e}"),
+                    )
+                }
             }
         }
 

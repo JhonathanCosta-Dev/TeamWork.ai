@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Speed — agente rápido em IA local (original, Team Work AI) -->
+  <circle cx="32" cy="32" r="30" fill="#1e4d57"/>
+  <circle cx="32" cy="32" r="30" fill="none" stroke="#2ac3de" stroke-width="2"/>
+  <circle cx="32" cy="26" r="11" fill="#dbf3f8"/>
+  <circle cx="28" cy="25" r="2" fill="#1a1b26"/>
+  <circle cx="36" cy="25" r="2" fill="#1a1b26"/>
+  <path d="M27 30 q5 3 10 0" stroke="#1a1b26" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <path d="M18 52 q14 -13 28 0" fill="#2ac3de"/>
+  <!-- raio: velocidade -->
+  <path d="M49 8 L42 19 L46 19 L43 26 L53 15 L48 15 Z" fill="#f7d15f" stroke="#1a1b26" stroke-width="0.6" stroke-linejoin="round"/>
+</svg>

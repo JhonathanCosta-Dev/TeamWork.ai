@@ -6,6 +6,7 @@ pub mod knowledge;
 pub mod memory;
 mod planner;
 mod terminal;
+pub mod web;
 
 pub use planner::PlannedSubtask;
 pub use terminal::TerminalReply;
@@ -67,6 +68,9 @@ pub struct OrchestratorConfig {
     /// justifica troca (quota, limite de contexto, rate limit persistente,
     /// modelo indisponível). 0 desativa a troca automática.
     pub max_model_fallbacks: usize,
+    /// Quantas rodadas de busca na internet (```search:``` / ```weather:```)
+    /// uma tarefa pode fazer antes de ter que responder. 0 desativa a busca.
+    pub max_web_searches: u32,
 }
 
 impl Default for OrchestratorConfig {
@@ -83,6 +87,7 @@ impl Default for OrchestratorConfig {
             retry: RetryPolicy::default(),
             memory_root: None,
             max_model_fallbacks: 3,
+            max_web_searches: 3,
         }
     }
 }
@@ -1301,6 +1306,10 @@ impl Orchestrator {
         if let Some(ws) = &workspace {
             system_prompt.push_str(&files::workspace_prompt(ws));
         }
+        // Ferramentas web/app: hoje habilitadas só pro Jorginho (Tech Lead).
+        if agent.mention_name() == "jorginho" {
+            system_prompt.push_str(web::TOOLS_PROMPT);
+        }
         // Vault pessoal (Obsidian): a setting "vault.<mention>" aponta a
         // pasta; o "Como Agir" e o índice entram no prompt do agente.
         if let Ok(Some(v)) = self
@@ -1382,7 +1391,7 @@ impl Orchestrator {
             token: &token,
         };
 
-        let response = loop {
+        let mut response = loop {
             match self
                 .attempt_completion(&provider, &model_id, &messages, &call_ctx)
                 .await
@@ -1447,6 +1456,100 @@ impl Orchestrator {
         if switched {
             self.persist_model_switch(agent, &model_id).await;
         }
+
+        // ------------------------------------------------------------------
+        // Ferramentas web (busca/clima): se o agente pediu uma ou mais buscas,
+        // o daemon executa e devolve o resultado num novo turno pra ele
+        // responder com base nisso. Limitado por max_web_searches (anti-loop).
+        // ------------------------------------------------------------------
+        if self.config.max_web_searches > 0 {
+            let mut searches = 0u32;
+            while searches < self.config.max_web_searches {
+                let blocks: Vec<web::ToolBlock> = web::parse_tool_blocks(&response.content)
+                    .into_iter()
+                    .filter(|b| b.kind != web::ToolKind::OpenApp)
+                    .collect();
+                if blocks.is_empty() {
+                    break;
+                }
+                let mut results = String::new();
+                for b in &blocks {
+                    let (label, outcome) = match b.kind {
+                        web::ToolKind::Weather => ("clima", web::weather(&b.arg).await),
+                        _ => ("busca", web::search(&b.arg).await),
+                    };
+                    self.emit(
+                        Event::new(
+                            events::WEB_SEARCHED,
+                            json!({ "kind": label, "query": b.arg, "agent_name": agent.name }),
+                        )
+                        .with_run(run_id.to_string())
+                        .with_task(task.id.to_string())
+                        .with_agent(agent.id.to_string()),
+                    )
+                    .await;
+                    match outcome {
+                        Ok(text) => results.push_str(&format!("[{label}: {}]\n{text}\n\n", b.arg)),
+                        Err(e) => {
+                            results.push_str(&format!("[{label}: {}]\nFalhou: {e}\n\n", b.arg))
+                        }
+                    }
+                }
+                searches += 1;
+                messages.push(ChatMessage::assistant(&response.content));
+                messages.push(ChatMessage::user(format!(
+                    "[RESULTADO DAS FERRAMENTAS]\n{}\nResponda o usuário de forma direta com base \
+                     nesses resultados. Não repita os blocos de ferramenta.",
+                    results.trim()
+                )));
+                match self
+                    .attempt_completion(&provider, &model_id, &messages, &call_ctx)
+                    .await
+                {
+                    Ok(r) => response = r,
+                    Err(ProviderError::Cancelled) => bail_cancelled!(),
+                    Err(e) => {
+                        return Err(self
+                            .fail_task(task, agent, &run_id, &e, &attempted_models)
+                            .await)
+                    }
+                }
+            }
+        }
+
+        // Abrir aplicativo: se o agente pediu (```open:app```), emite um pedido
+        // de confirmação pro widget. NADA é executado aqui — o app só abre
+        // depois que o usuário aprova (widget → método app.open).
+        for b in web::parse_tool_blocks(&response.content)
+            .into_iter()
+            .filter(|b| b.kind == web::ToolKind::OpenApp)
+        {
+            let request_id = ArtifactId::new().to_string();
+            let (app, args) = match b.arg.split_once(char::is_whitespace) {
+                Some((a, rest)) => (a.to_string(), rest.trim().to_string()),
+                None => (b.arg.clone(), String::new()),
+            };
+            self.emit(
+                Event::new(
+                    events::APP_OPEN_REQUEST,
+                    json!({
+                        "request_id": request_id,
+                        "app": app,
+                        "args": args,
+                        "agent_name": agent.name,
+                    }),
+                )
+                .with_run(run_id.to_string())
+                .with_task(task.id.to_string())
+                .with_agent(agent.id.to_string()),
+            )
+            .await;
+        }
+
+        // Tira os blocos de ferramenta (search/weather/open) da resposta
+        // exibida — já foram processados; não devem aparecer como "comando"
+        // na resposta final ao usuário. (file:/memory: seguem seu curso.)
+        response.content = web::strip_tool_blocks(&response.content);
 
         // Gravação de arquivos no workspace (se definido pelo usuário).
         if let Some(ws) = &workspace {

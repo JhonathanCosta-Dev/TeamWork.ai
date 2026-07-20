@@ -16,9 +16,110 @@ Column {
     property int listHeight: 160
     property bool showLabel: true
     property bool showTaskTabs: false
+    property bool showFlow: false          // linha "Fluxo ao vivo" (tela cheia)
     property string activeTab: "final" // "final" | "internal" | "tasks" | "timeline"
 
     spacing: Theme.spacing
+
+    // Agentes ligados e ociosos (pro contador da barra de abas).
+    readonly property int _idleCount: {
+        let n = 0;
+        for (const a of (root.store.agents ?? []))
+            if (a.enabled && (a.status ?? "idle") === "idle")
+                n += 1;
+        return n;
+    }
+    // Primeiro agente ligado que está trabalhando (pro texto da Fluxo ao vivo).
+    readonly property string _workingName: {
+        for (const a of (root.store.agents ?? [])) {
+            if (!a.enabled)
+                continue;
+            const s = a.status ?? "idle";
+            if (s !== "idle" && s !== "offline" && s !== "completed" && s !== "paused")
+                return a.name ?? "";
+        }
+        return "";
+    }
+
+    // Banner de confirmação pra abrir aplicativo (um agente pediu). Fica no
+    // topo enquanto houver pedido; NADA abre sem o usuário clicar "Abrir".
+    Rectangle {
+        id: appBanner
+        visible: root.store.pendingApp !== null && root.store.pendingApp !== undefined
+        width: parent.width
+        height: visible ? appCol.implicitHeight + 20 : 0
+        radius: Theme.radiusSmall
+        color: Qt.alpha(Theme.accent, 0.15)
+        border.width: 1
+        border.color: Theme.accent
+
+        Column {
+            id: appCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            spacing: 8
+
+            Text {
+                width: parent.width
+                text: root.store.pendingApp
+                      ? ("🚀 " + root.store.pendingApp.agent + " quer abrir: "
+                         + root.store.pendingApp.app
+                         + (root.store.pendingApp.args && root.store.pendingApp.args.length > 0
+                            ? " " + root.store.pendingApp.args : ""))
+                      : ""
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSize
+                wrapMode: Text.WordWrap
+            }
+            Row {
+                spacing: 8
+                Rectangle {
+                    width: openText.implicitWidth + 24
+                    height: 28
+                    radius: Theme.radiusSmall
+                    color: Qt.alpha(Theme.accent, 0.3)
+                    border.width: 1
+                    border.color: Theme.accent
+                    Text {
+                        id: openText
+                        anchors.centerIn: parent
+                        text: "Abrir"
+                        color: Theme.textPrimary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: root.store.confirmApp()
+                    }
+                }
+                Rectangle {
+                    width: cancelText.implicitWidth + 24
+                    height: 28
+                    radius: Theme.radiusSmall
+                    color: Theme.surface
+                    border.width: 1
+                    border.color: Theme.border
+                    Text {
+                        id: cancelText
+                        anchors.centerIn: parent
+                        text: "Cancelar"
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: root.store.cancelApp()
+                    }
+                }
+            }
+        }
+    }
 
     Text {
         visible: root.showLabel
@@ -28,39 +129,143 @@ Column {
         font.pixelSize: Theme.fontSizeSmall
     }
 
-    Row {
+    Item {
         id: tabsRow
+        width: parent.width
         height: 26
-        spacing: 6
 
-        TerminalTabButton {
-            label: "Resposta final"
-            active: root.activeTab === "final"
-            onClicked: root.activeTab = "final"
+        Row {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6
+
+            TerminalTabButton {
+                label: "Resposta final"
+                active: root.activeTab === "final"
+                onClicked: root.activeTab = "final"
+            }
+            TerminalTabButton {
+                label: "Conversa entre IAs"
+                active: root.activeTab === "internal"
+                onClicked: root.activeTab = "internal"
+            }
+            TerminalTabButton {
+                label: "Tarefas"
+                visible: root.showTaskTabs
+                active: root.activeTab === "tasks"
+                onClicked: root.activeTab = "tasks"
+            }
+            TerminalTabButton {
+                label: "Linha do tempo"
+                visible: root.showTaskTabs
+                active: root.activeTab === "timeline"
+                onClicked: root.activeTab = "timeline"
+            }
         }
-        TerminalTabButton {
-            label: "Conversa entre IAs"
-            active: root.activeTab === "internal"
-            onClicked: root.activeTab = "internal"
+
+        // Contador de agentes ociosos (canto direito da barra de abas).
+        Row {
+            visible: root.showFlow
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6
+
+            Rectangle {
+                width: 8
+                height: 8
+                radius: 4
+                anchors.verticalCenter: parent.verticalCenter
+                color: Theme.success
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root._idleCount + (root._idleCount === 1 ? " agente ocioso"
+                                                              : " agentes ociosos")
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeSmall
+            }
         }
-        TerminalTabButton {
-            label: "Tarefas"
-            visible: root.showTaskTabs
-            active: root.activeTab === "tasks"
-            onClicked: root.activeTab = "tasks"
+    }
+
+    // "Fluxo ao vivo": pipeline compacto dos agentes ligados por setas,
+    // terminando no último (ex.: o raio do Speed). À direita, o estado atual.
+    Rectangle {
+        id: flowRow
+        visible: root.showFlow
+        width: parent.width
+        height: visible ? 52 : 0
+        radius: Theme.radiusSmall
+        color: Theme.surface
+        border.width: 1
+        border.color: Theme.border
+
+        Row {
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 10
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Fluxo ao vivo"
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeSmall
+                font.bold: true
+            }
+
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4
+
+                Repeater {
+                    id: flowRepeater
+                    model: root.store.agents ?? []
+
+                    delegate: Row {
+                        id: flowCell
+                        required property var modelData
+                        required property int index
+                        visible: flowCell.modelData.enabled
+                        spacing: 4
+
+                        AgentAvatar {
+                            anchors.verticalCenter: parent.verticalCenter
+                            agent: flowCell.modelData
+                            size: 26
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: flowCell.index < flowRepeater.count - 1
+                            text: "→"
+                            color: Theme.textDisabled
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize
+                        }
+                    }
+                }
+            }
         }
-        TerminalTabButton {
-            label: "Linha do tempo"
-            visible: root.showTaskTabs
-            active: root.activeTab === "timeline"
-            onClicked: root.activeTab = "timeline"
+
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            text: root._workingName.length > 0
+                  ? root._workingName + " trabalhando…"
+                  : "Ninguém trabalhando — envie uma tarefa"
+            color: root._workingName.length > 0 ? Theme.textPrimary : Theme.textDisabled
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeSmall
         }
     }
 
     Item {
         id: contentArea
         width: parent.width
-        height: Math.max(0, root.listHeight - tabsRow.height - root.spacing)
+        height: Math.max(0, root.listHeight - tabsRow.height - root.spacing
+                         - (flowRow.visible ? flowRow.height + root.spacing : 0))
 
         ListView {
             id: termList

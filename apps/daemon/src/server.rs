@@ -76,6 +76,19 @@ pub fn build_registry(config: &DaemonConfig) -> ProviderRegistry {
             "provedor anthropic configurado (sem tier gratuito — requer allow_paid_models=true para uso)"
         );
     }
+    // Servidor de IA local/self-hosted compatível com OpenAI (Ollama, LM
+    // Studio, vLLM…), rodando na máquina do usuário ou em outra na rede.
+    // Basta a URL base (ex.: http://192.168.0.42:11434/v1); os modelos são
+    // descobertos por `/models` e são sempre gratuitos (rodam no hardware do
+    // usuário). A chave é opcional — servidores locais costumam ignorá-la.
+    if let Some(base_url) = crate::config::env_value("LOCAL_LLM_BASE_URL", &file_env) {
+        let key = crate::config::env_value("LOCAL_LLM_API_KEY", &file_env).unwrap_or_default();
+        registry.register(
+            Arc::new(OpenAiCompatProvider::local(&base_url, key)),
+            config.rpm("local"),
+        );
+        tracing::info!(base_url = %base_url, "provedor local (self-hosted, OpenAI-compat) configurado");
+    }
     // Claude Code CLI local (sem chave: usa a assinatura já autenticada do
     // usuário). Agência na máquina em modo "sem shell": lê/edita arquivos,
     // skills e web pré-aprovados; Bash negado pelo gate do próprio CLI.

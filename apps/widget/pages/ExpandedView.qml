@@ -38,12 +38,13 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 8
 
-                Text {
-                    text: "Team Work AI"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSizeLarge
-                    font.bold: true
+                Image {
+                    anchors.verticalCenter: parent.verticalCenter
+                    source: "../assets/team-work-ai-logo.svg"
+                    height: 24
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.height: 48
+                    smooth: true
                 }
                 Rectangle {
                     width: 8

@@ -336,7 +336,8 @@ impl AiProvider for AnthropicProvider {
                                     let delta = evt["delta"]["text"].as_str().unwrap_or("");
                                     if !delta.is_empty() {
                                         return Ok(Some((
-                                            StreamChunk { progress: false,
+                                            StreamChunk {
+                                                progress: false,
                                                 delta: delta.to_string(),
                                                 done: false,
                                             },
@@ -346,7 +347,8 @@ impl AiProvider for AnthropicProvider {
                                 }
                                 Some("message_stop") => {
                                     return Ok(Some((
-                                        StreamChunk { progress: false,
+                                        StreamChunk {
+                                            progress: false,
                                             delta: String::new(),
                                             done: true,
                                         },
@@ -368,7 +370,8 @@ impl AiProvider for AnthropicProvider {
                         }
                         None => {
                             return Ok(Some((
-                                StreamChunk { progress: false,
+                                StreamChunk {
+                                    progress: false,
                                     delta: String::new(),
                                     done: true,
                                 },
