@@ -97,4 +97,7 @@ if [ ! -S "$SOCK" ]; then
     fi
 fi
 
-exec quickshell -p "$WIDGET_QML"
+# QML_XHR_ALLOW_FILE_READ: o avatar (GideonAvatar) lê o modelo assado
+# (assets/face-data.json) via XHR; o Qt bloqueia leitura de arquivo local por
+# padrão, então habilitamos aqui.
+exec env QML_XHR_ALLOW_FILE_READ=1 quickshell -p "$WIDGET_QML"

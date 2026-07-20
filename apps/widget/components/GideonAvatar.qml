@@ -1,19 +1,19 @@
-pragma ComponentBehavior: Bound
 import QtQuick
 import "../theme"
 
-// Avatar holográfico do agente: máscara facial de malha fina de pontos
-// (wireframe de partículas), com anatomia 3D — sobrancelhas em arco,
-// órbitas fundas, nariz com ponta/asas, lábios, bochechas escavadas —
-// e humor visual por cor + expressão:
-//   neutral  → azul    | calmo
-//   thinking → laranja | sobrancelha ergue, boca de lado, olhar alto
-//   happy    → verde   | olhos em meia-lua + sorriso
-//   serious  → vermelho| olhos estreitos + cenho fechado + boca reta
+// Avatar holográfico v3: nuvem de pontos da CABEÇA REAL do modelo facecap
+// (three.js), "assada" em widget/assets/face-data.json — 4600 pontos com
+// posição, normal, oclusão ambiente (AO) e 10 canais de morph (expressões
+// ARKit). Renderizado em Canvas 2D com projeção/iluminação próprias — nada de
+// WebGL (que crasha o Quickshell). Porte do renderer do repositório
+// Alfinet-Shopify/agente-face.
 //
-// Tudo é ponto — nenhum traço. Canvas 2D com projeção em perspectiva
-// própria (three.js/WebGL exigiria WebEngineView, que crasha o
-// Quickshell — issue #298).
+// Expressões por humor (canais de morph):
+//   neutral  → azul    | quase neutro, leve sobrancelha
+//   thinking → laranja | sobrancelha erguida + olhos atentos (curioso)
+//   happy    → verde   | sorriso + bochecha + olhos em meia-lua
+//   serious  → vermelho| sobrancelha baixa + boca firme (intenso)
+// Fala anima a mandíbula (jawOpen); pisca e move o olhar sozinho.
 Item {
     id: root
 
@@ -22,233 +22,221 @@ Item {
     property bool listening: false
     // Humor visual: neutral | thinking | happy | serious
     property string mood: "neutral"
-    // Modo "descanso de tela": olhar vagando pros lados devagar,
-    // como se observasse o ambiente.
+    // Modo "descanso de tela": olhar vaga mais amplo.
     property bool idleShow: false
-
-    readonly property var _moodColors: ({
-        "neutral":  "#6db8ff",
-        "thinking": "#ffa95e",
-        "happy":    "#7fe08a",
-        "serious":  "#ff5f6e"
-    })
-    property color baseColor: root._moodColors[root.mood] ?? "#6db8ff"
-    Behavior on baseColor { ColorAnimation { duration: 650 } }
-
-    // Pesos de expressão (0..1) animados — o paint mistura as feições.
-    property real _wThink: 0
-    property real _wHappy: 0
-    property real _wSerious: 0
-    Behavior on _wThink   { NumberAnimation { duration: 550; easing.type: Easing.InOutCubic } }
-    Behavior on _wHappy   { NumberAnimation { duration: 550; easing.type: Easing.InOutCubic } }
-    Behavior on _wSerious { NumberAnimation { duration: 550; easing.type: Easing.InOutCubic } }
-
-    // Peso de fala animado: enquanto fala, a boca volta ao centro (os
-    // trejeitos de humor saem de cena) e articula como uma boca normal.
-    property real _wSpeak: root.speaking ? 1 : 0
-    Behavior on _wSpeak { NumberAnimation { duration: 300; easing.type: Easing.InOutCubic } }
-
-    onMoodChanged: _applyMood()
-
-    function _applyMood() {
-        _wThink = root.mood === "thinking" ? 1 : 0;
-        _wHappy = root.mood === "happy" ? 1 : 0;
-        _wSerious = root.mood === "serious" ? 1 : 0;
-    }
-
-    // EXPERIMENTO: desmonta e remonta as partículas a cada 15 s.
-    // Pra reverter, basta trocar pra false.
+    // Aceito por compatibilidade com chamadas antigas; sem efeito na v3.
     property bool cycleAssemble: true
 
-    // --- estado interno da simulação ---
-    property real _t: 0
-    property real _assemble: 0
-    property bool _dissolving: false
-    property var _points: []
-    property var _orbits: []
-    property var _stars: []
-    property var _featScatter: []        // dispersão dos pontos de olhos/boca
-    property real _eyeZ: 0.4
-    property real _mouthZ: 0.4
+    // Humor → cor + pesos dos canais de expressão (0..1).
+    readonly property var _moods: ({
+        "neutral":  { color: "#6db8ff", ch: { "browUp": 0.06 } },
+        "thinking": { color: "#ffa95e", ch: { "browUp": 0.55, "browOuterUp": 0.45, "eyeWide": 0.4, "smile": 0.14 } },
+        "happy":    { color: "#7fe08a", ch: { "smile": 0.95, "cheek": 0.55, "eyeSquint": 0.4, "jawOpen": 0.06, "browUp": 0.1 } },
+        "serious":  { color: "#ff5f6e", ch: { "browDown": 0.85, "frown": 0.5, "eyeSquint": 0.35, "jawOpen": 0.04 } }
+    })
 
-    onVisibleChanged: if (visible) _assemble = 0
+    // --- dados decodificados ---
+    property var _pos: null       // Float32Array (count*3), normalizado [-1,1]
+    property var _nor: null       // Float32Array (count*3)
+    property var _ao: null        // Float32Array (count)
+    property var _morphNames: []
+    property var _morphs: ({})    // name -> { idx: Uint16Array, del: Float32Array }
+    property int _count: 0
+    property bool _ready: false
+
+    // --- estado de expressão (por canal: cur/tgt eased) ---
+    property var _cur: ({})
+
+    // --- buffers reaproveitados ---
+    property var _work: null
+    property var _twinkle: null
+    property var _bx: null        // 16 Float32Array
+    property var _by: null
+    property var _bsz: null       // tamanho do ponto por bucket
+    property var _bcount: null    // Int32Array(16)
+
+    // --- paleta (16 níveis) a partir da cor do humor ---
+    property string _colorHex: "#6db8ff"
+    property var _palette: []
+
+    // --- comportamento (segundos) ---
+    property real _t: 0
+    property real _blinkT: 10
+    property real _nextBlink: 3
+    property real _gazeX: 0
+    property real _gazeY: 0
+    property real _gazeTX: 0
+    property real _gazeTY: 0
+    property real _nextSaccade: 1.5
+    property real _talkPhase: 0
+
+    readonly property int _levels: 16
+
+    onMoodChanged: _applyMood()
+    onVisibleChanged: if (visible) _last = 0
+
+    property real _last: 0
 
     Component.onCompleted: {
-        _applyMood();
-        _buildScene();
+        _buildPalette();
+        _load();
     }
 
+    // ------------------------------------------------------------------
+    // Carga + decodificação dos dados assados
+    // ------------------------------------------------------------------
+    // Lê o face-data.json via XHR (requer QML_XHR_ALLOW_FILE_READ=1 no
+    // ambiente — o launcher e o start.sh já definem isso). O Quickshell
+    // resolve o caminho relativo pro arquivo real via seu interceptor de VFS.
+    function _load() {
+        const xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== XMLHttpRequest.DONE)
+                return;
+            const txt = xhr.responseText ?? "";
+            if (txt.length === 0) {
+                console.log("GideonAvatar v3: face-data vazio (QML_XHR_ALLOW_FILE_READ=1?)");
+                return;
+            }
+            try {
+                root._decode(JSON.parse(txt));
+            } catch (e) {
+                console.log("GideonAvatar v3: erro ao decodificar face-data:", e);
+            }
+        };
+        xhr.open("GET", Qt.resolvedUrl("../assets/face-data.json"));
+        xhr.send();
+    }
+
+    // base64 → Uint8Array (sem depender de atob).
+    function _b64(s) {
+        const lut = new Int16Array(128);
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (let i = 0; i < chars.length; i++)
+            lut[chars.charCodeAt(i)] = i;
+        let len = s.length;
+        let pad = 0;
+        if (len > 0 && s.charCodeAt(len - 1) === 61)
+            pad++;
+        if (len > 1 && s.charCodeAt(len - 2) === 61)
+            pad++;
+        const outLen = (len >> 2) * 3 - pad;
+        const bytes = new Uint8Array(outLen);
+        let p = 0;
+        for (let i = 0; i < len; i += 4) {
+            const n = (lut[s.charCodeAt(i)] << 18) | (lut[s.charCodeAt(i + 1)] << 12)
+                    | (lut[s.charCodeAt(i + 2)] << 6) | lut[s.charCodeAt(i + 3)];
+            if (p < outLen) bytes[p++] = (n >> 16) & 0xff;
+            if (p < outLen) bytes[p++] = (n >> 8) & 0xff;
+            if (p < outLen) bytes[p++] = n & 0xff;
+        }
+        return bytes;
+    }
+
+    function _decode(d) {
+        root._count = d.count;
+        const N = d.count;
+
+        const posI16 = new Int16Array(_b64(d.pos).buffer);
+        root._pos = new Float32Array(N * 3);
+        for (let i = 0; i < N * 3; i++)
+            root._pos[i] = posI16[i] / 32000;
+
+        const norI8 = new Int8Array(_b64(d.nor).buffer);
+        root._nor = new Float32Array(N * 3);
+        for (let i = 0; i < N * 3; i++)
+            root._nor[i] = norI8[i] / 120;
+
+        const aoU8 = _b64(d.ao);
+        root._ao = new Float32Array(N);
+        for (let i = 0; i < N; i++)
+            root._ao[i] = aoU8[i] / 255;
+
+        root._morphNames = Object.keys(d.morphs);
+        const morphs = {};
+        const cur = {};
+        for (const name of root._morphNames) {
+            const m = d.morphs[name];
+            const idx = new Uint16Array(_b64(m.idx).buffer);
+            const delI16 = new Int16Array(_b64(m.del).buffer);
+            const del = new Float32Array(delI16.length);
+            for (let i = 0; i < delI16.length; i++)
+                del[i] = delI16[i] / 32000;
+            morphs[name] = { idx: idx, del: del };
+            cur[name] = { cur: 0, tgt: 0 };
+        }
+        root._morphs = morphs;
+        root._cur = cur;
+
+        root._work = new Float32Array(N * 3);
+        root._twinkle = new Float32Array(N);
+        for (let i = 0; i < N; i++)
+            root._twinkle[i] = Math.random() * 6.283;
+
+        const bx = [], by = [];
+        for (let i = 0; i < root._levels; i++) {
+            bx.push(new Float32Array(N));
+            by.push(new Float32Array(N));
+        }
+        root._bx = bx;
+        root._by = by;
+        root._bcount = new Int32Array(root._levels);
+
+        root._ready = true;
+        _applyMood();
+        canvas.requestPaint();
+    }
+
+    // ------------------------------------------------------------------
+    // Humor / paleta
+    // ------------------------------------------------------------------
+    function _applyMood() {
+        const m = root._moods[root.mood] || root._moods["neutral"];
+        root._colorHex = m.color;
+        _buildPalette();
+        if (!root._ready)
+            return;
+        for (const name of root._morphNames)
+            root._cur[name].tgt = (m.ch[name] !== undefined ? m.ch[name] : 0);
+    }
+
+    function _buildPalette() {
+        const hex = root._colorHex.replace("#", "");
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        const pal = [];
+        for (let i = 0; i < root._levels; i++) {
+            const t = i / (root._levels - 1);
+            const lift = Math.max(0, t - 0.85) * 1.6;
+            const rr = Math.min(255, Math.round(r * t + 255 * lift * t));
+            const gg = Math.min(255, Math.round(g * t + 255 * lift * t));
+            const bb = Math.min(255, Math.round(b * t + 255 * lift * t));
+            pal.push("rgba(" + rr + "," + gg + "," + bb + ","
+                     + (0.25 + 0.75 * t).toFixed(3) + ")");
+        }
+        root._palette = pal;
+    }
+
+    function _damp(cur, tgt, lambda, dt) {
+        return cur + (tgt - cur) * (1 - Math.exp(-lambda * dt));
+    }
+
+    // dt do frame atual (varia com o framerate adaptativo abaixo).
+    property real _frameDt: 0.033
+
+    // Framerate adaptativo: 30fps quando ativo (fala/escuta/descanso de tela),
+    // ~22fps ocioso — segura a CPU com a malha densa (9000 pontos) sem perder
+    // fluidez quando importa.
     Timer {
-        interval: 33
-        running: root.visible
+        interval: (root.speaking || root.listening || root.idleShow) ? 33 : 45
+        running: root.visible && root._ready
         repeat: true
         onTriggered: {
-            root._t += 0.033;
-            if (root._dissolving) {
-                root._assemble = Math.max(0, root._assemble - 0.033 / 1.0);
-                if (root._assemble === 0)
-                    root._dissolving = false;    // chegou na massa: remonta
-            } else if (root._assemble < 1) {
-                root._assemble = Math.min(1, root._assemble + 0.033 / 2.4);
-            }
+            root._frameDt = interval / 1000;
+            root._t += root._frameDt;
             canvas.requestPaint();
         }
-    }
-
-    Timer {
-        interval: 15000
-        running: root.visible && root.cycleAssemble
-        repeat: true
-        onTriggered: root._dissolving = true
-    }
-
-    function _gauss(x, s) {
-        return Math.exp(-(x * x) / (2 * s * s));
-    }
-
-    // Silhueta da máscara por altura (v: -1 topo → +1 queixo): larga nas
-    // têmporas/maçãs, afunila liso até um queixo fino — o formato exato
-    // vem desta tabela de meia-larguras.
-    readonly property var _hwTable: [
-        [-1.00, 0.50], [-0.72, 0.62], [-0.40, 0.67], [-0.05, 0.68],
-        [0.30, 0.60], [0.60, 0.50], [0.85, 0.38], [1.00, 0.28]
-    ]
-
-    function _halfWidth(v) {
-        const tb = _hwTable;
-        if (v <= tb[0][0])
-            return tb[0][1];
-        for (let i = 1; i < tb.length; i++) {
-            if (v <= tb[i][0]) {
-                let k = (v - tb[i - 1][0]) / (tb[i][0] - tb[i - 1][0]);
-                k = k * k * (3 - 2 * k);        // suaviza entre os nós
-                return tb[i - 1][1] + (tb[i][1] - tb[i - 1][1]) * k;
-            }
-        }
-        return tb[tb.length - 1][1];
-    }
-
-    // Campo de profundidade + brilho de feição. Retorna:
-    // [profundidade, borda 0..1, brilho-extra 0..1] ou null fora da máscara.
-    function _depth(u, v) {
-        const hw = _halfWidth(v);
-        const ex = (u / hw) * (u / hw);
-        // Corte vertical: topo elíptico (crânio arredondado), base mais
-        // reta (queixo vem da tabela de larguras).
-        const e = ex + Math.pow(Math.abs(v) / 0.97, v < 0 ? 4 : 8);
-        if (e > 1)
-            return null;
-
-        // Volume arredondado da máscara.
-        const ee = Math.min(1, ex + (v / 0.99) * (v / 0.99));
-        let d = Math.sqrt(1 - ee) * 0.50;
-
-        d += 0.22 * _gauss(u, 0.055) * _gauss(v - 0.25, 0.24);    // dorso do nariz
-        d += 0.16 * _gauss(u, 0.08) * _gauss(v - 0.42, 0.05);     // ponta do nariz
-        d += 0.07 * (_gauss(u - 0.11, 0.045) + _gauss(u + 0.11, 0.045))
-                  * _gauss(v - 0.45, 0.04);                       // asas do nariz
-        d += 0.10 * (_gauss(u - 0.30, 0.15) + _gauss(u + 0.30, 0.15))
-                  * _gauss(v + 0.17, 0.05);                       // arcada das sobrancelhas
-        d -= 0.12 * (_gauss(u - 0.26, 0.11) + _gauss(u + 0.26, 0.11))
-                  * _gauss(v + 0.05, 0.07);                       // órbitas fundas
-        d += 0.08 * (_gauss(u - 0.42, 0.12) + _gauss(u + 0.42, 0.12))
-                  * _gauss(v - 0.10, 0.10);                       // maçãs do rosto
-        d -= 0.07 * (_gauss(u - 0.24, 0.10) + _gauss(u + 0.24, 0.10))
-                  * _gauss(v - 0.32, 0.12);                       // bochechas escavadas
-        d += 0.08 * _gauss(u, 0.14) * _gauss(v - 0.58, 0.045);    // lábio superior
-        d += 0.06 * _gauss(u, 0.10) * _gauss(v - 0.68, 0.04);     // lábio inferior
-        d += 0.10 * _gauss(u, 0.12) * _gauss(v - 0.85, 0.08);     // queixo
-        d += 0.07 * _gauss(u, 0.36) * _gauss(v + 0.55, 0.26);     // testa
-
-        // Brilho extra das feições (como na referência): sobrancelhas em
-        // arco acesas, ponta/asas do nariz e lábios sutis.
-        const browCurve = -0.21 - 0.05 * Math.pow((Math.abs(u) - 0.30) / 0.20, 2);
-        let boost = 0;
-        if (Math.abs(u) > 0.10 && Math.abs(u) < 0.50)
-            boost += 0.9 * _gauss(v - browCurve, 0.028);          // sobrancelhas
-        boost += 0.7 * _gauss(u, 0.09) * _gauss(v - 0.43, 0.045); // ponta do nariz
-        boost += 0.5 * (_gauss(u - 0.11, 0.04) + _gauss(u + 0.11, 0.04))
-                     * _gauss(v - 0.455, 0.035);                  // asas
-        boost += 0.30 * _gauss(u, 0.13) * _gauss(v - 0.615, 0.035); // lábios
-        return [d, e, Math.min(1, boost)];
-    }
-
-    function _buildScene() {
-        // Malha fina e estruturada (sem jitter): a projeção 3D da grade
-        // cria as linhas de contorno que envolvem as feições.
-        const pts = [];
-        const cols = 112, rows = 154;
-        for (let iy = 0; iy < rows; iy++) {
-            for (let ix = 0; ix < cols; ix++) {
-                const u = -1 + 2 * (ix + 0.5) / cols;
-                const v = -1 + 2 * (iy + 0.5) / rows;
-                const dd = _depth(u, v);
-                if (dd === null)
-                    continue;
-                pts.push({
-                    x: u, y: v, z: dd[0], e: dd[1], boost: dd[2],
-                    seed: Math.random() * 6.283,
-                    sx: (Math.random() - 0.5) * 3.6,
-                    sy: (Math.random() - 0.5) * 3.6,
-                    sz: (Math.random() - 0.5) * 1.8,
-                    brow: dd[2] > 0.35 && v < -0.05
-                          && Math.abs(u) > 0.10 && Math.abs(u) < 0.50,
-                    cheek: Math.abs(u) > 0.28 && Math.abs(u) < 0.58
-                           && v > 0.05 && v < 0.35
-                });
-            }
-        }
-        _points = pts;
-        _eyeZ = _depth(0.26, -0.05)[0];
-        _mouthZ = _depth(0, 0.63)[0];
-
-        // Anéis orbitais + linha horizontal de pontos (como na referência).
-        const orbits = [];
-        const radii = [1.22, 1.44, 1.66];
-        for (let i = 0; i < 54; i++) {
-            orbits.push({
-                r: radii[i % 3],
-                ang: Math.random() * 6.283,
-                spd: (i % 3 === 0 ? 1 : -1) * (0.02 + 0.015 * (i % 3)),
-                size: Math.random() < 0.15 ? 2.2 : 1.1,
-                a: Math.random() < 0.15 ? 0.75 : 0.30,
-                seed: Math.random() * 6.283
-            });
-        }
-        for (let s = 0; s < 8; s++) {
-            orbits.push({
-                r: 1.05 + 0.13 * s,
-                ang: s % 2 === 0 ? 0 : Math.PI,
-                spd: 0,
-                size: s % 3 === 0 ? 1.8 : 1.0,
-                a: 0.5 - 0.04 * s,
-                seed: s
-            });
-        }
-        _orbits = orbits;
-
-        const stars = [];
-        for (let i = 0; i < 26; i++) {
-            stars.push({
-                x: (Math.random() - 0.5) * 3.8,
-                y: (Math.random() - 0.5) * 3.0,
-                seed: Math.random() * 6.283
-            });
-        }
-        _stars = stars;
-
-        // Olhos e boca também são partículas: cada ponto ganha sua posição
-        // dispersa e some/reaparece na montagem igual à malha.
-        const fs = [];
-        for (let i = 0; i < 200; i++) {
-            fs.push({
-                seed: Math.random() * 6.283,
-                sx: (Math.random() - 0.5) * 3.6,
-                sy: (Math.random() - 0.5) * 3.6,
-                sz: (Math.random() - 0.5) * 1.8
-            });
-        }
-        _featScatter = fs;
     }
 
     Canvas {
@@ -257,316 +245,139 @@ Item {
         contextType: "2d"
 
         onPaint: {
+            if (!root._ready)
+                return;
             const ctx = getContext("2d");
             const W = width, H = height;
-            ctx.clearRect(0, 0, W, H);
-            if (W <= 0 || H <= 0 || root._points.length === 0)
+            if (W <= 0 || H <= 0)
                 return;
 
+            const dt = root._frameDt;
             const t = root._t;
-            const speaking = root.speaking;
-            const th = root._wThink, hp = root._wHappy, sr = root._wSerious;
-            const energy = speaking ? 1.0 : (root.listening ? 0.7 : 0.45);
-            const cx = W / 2, cy = H * 0.52;
-            const scale = Math.min(W, H) * 0.365;
-            // Em telas grandes (descanso de tela) os pontos crescem junto,
-            // mantendo a densidade visual da malha.
-            const sizeK = Math.max(1, scale / 110);
+            const N = root._count;
+            const LV = root._levels;
+            const R = Math.min(W, H) * 0.36;
+            // Pontos menores com a malha densa (9000) → definição mais fina.
+            const dotSize = Math.max(1, Math.round(R * 0.011));
 
-            const talk = speaking
-                ? Math.max(0, 0.5 * Math.sin(t * 9.0) + 0.35 * Math.sin(t * 5.3)
-                              + 0.25 * Math.sin(t * 13.7))
-                : 0;
-            const flicker = 0.93 + 0.07 * Math.sin(t * 9.3) * (0.5 + 0.5 * Math.sin(t * 3.7));
-            const listenPulse = root.listening ? 0.5 + 0.5 * Math.sin(t * 2.4) : 0;
-
-            const c = root.baseColor;
-            const br = Math.round(c.r * 255), bg = Math.round(c.g * 255), bb = Math.round(c.b * 255);
-            const rgba = function (a) {
-                return "rgba(" + br + "," + bg + "," + bb + "," + a.toFixed(3) + ")";
-            };
-
-            // Glow difuso atrás do rosto.
-            const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, scale * 1.5);
-            glow.addColorStop(0, rgba(0.10 + 0.08 * energy * flicker + 0.10 * listenPulse));
-            glow.addColorStop(1, rgba(0));
-            ctx.fillStyle = glow;
-            ctx.fillRect(0, 0, W, H);
-
-            // ---------------- anéis orbitais + estrelas ----------------
-            ctx.lineWidth = 1;
-            const ringR = [1.22, 1.44, 1.66];
-            const ringA = [0.11, 0.07, 0.05];
-            for (let i = 0; i < 3; i++) {
-                ctx.strokeStyle = rgba(ringA[i] * flicker);
-                ctx.beginPath();
-                ctx.arc(cx, cy, scale * ringR[i], 0, 6.2832);
-                ctx.stroke();
+            // -- comportamento: piscar, olhar (saccades), fala --
+            root._blinkT += dt;
+            if (root._blinkT > root._nextBlink) {
+                root._blinkT = 0;
+                root._nextBlink = 2 + Math.random() * 4;
             }
-            for (let i = 0; i < root._orbits.length; i++) {
-                const o = root._orbits[i];
-                const a = o.ang + o.spd * t;
-                const px = cx + Math.cos(a) * scale * o.r;
-                const py = cy + Math.sin(a) * scale * o.r * 0.996;
-                const tw = 0.75 + 0.25 * Math.sin(t * 1.7 + o.seed);
-                ctx.fillStyle = rgba(o.a * tw);
-                ctx.fillRect(px, py, o.size * sizeK, o.size * sizeK);
+            const blinkEnv = Math.max(0, 1 - Math.abs(root._blinkT - 0.07) / 0.07);
+
+            root._nextSaccade -= dt;
+            if (root._nextSaccade < 0) {
+                const amp = root.idleShow ? 1.0 : 0.6;
+                root._nextSaccade = 1.5 + Math.random() * 4;
+                root._gazeTX = (Math.random() - 0.5) * 0.5 * amp;
+                root._gazeTY = (Math.random() - 0.5) * 0.24 * amp;
             }
-            for (let i = 0; i < root._stars.length; i++) {
-                const s = root._stars[i];
-                const tw = 0.5 + 0.5 * Math.sin(t * 1.1 + s.seed);
-                ctx.fillStyle = rgba(0.08 + 0.14 * tw);
-                ctx.fillRect(cx + s.x * scale, cy + s.y * scale,
-                             1.2 * sizeK, 1.2 * sizeK);
+            root._gazeX = root._damp(root._gazeX, root._gazeTX, 3, dt);
+            root._gazeY = root._damp(root._gazeY, root._gazeTY, 3, dt);
+
+            let jawTalk = 0;
+            if (root.speaking) {
+                root._talkPhase += dt * 11;
+                jawTalk = 0.1 + 0.16 * Math.abs(Math.sin(root._talkPhase)
+                                                * Math.sin(root._talkPhase * 0.37 + 1.7));
             }
 
-            // ---------------- máscara (malha de pontos) ----------------
-            // No descanso de tela o olhar vaga: camadas de senos lentos em
-            // frequências não múltiplas parecem "olhar pros lados" natural.
-            const wander = root.idleShow ? 1 : 0;
-            const rotY = 0.20 * Math.sin(t * 0.32)
-                       + wander * (0.28 * Math.sin(t * 0.11)
-                                   + 0.15 * Math.sin(t * 0.047 + 1.7))
-                       + (speaking ? 0.045 * Math.sin(t * 1.9) : 0);
-            const rotX = 0.05 * Math.sin(t * 0.21)
-                       + wander * 0.08 * Math.sin(t * 0.083 + 0.5)
-                       - 0.05 * th + 0.01 * hp
-                       + (speaking ? 0.04 * Math.sin(t * 2.6) : 0);
-            const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
-            const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
-            const wobble = 0.003 + 0.005 * energy;
-            const zCenter = 0.28;
-
-            const buckets = [[], [], [], [], [], [], [], []];
-            const pts = root._points;
-
-            for (let i = 0; i < pts.length; i++) {
-                const p = pts[i];
-
-                let a = root._assemble * 1.2 - (p.seed / 6.283) * 0.2;
-                a = Math.min(1, Math.max(0, a));
-                a = 1 - Math.pow(1 - a, 3);
-
-                let x = p.sx + (p.x - p.sx) * a;
-                let y = p.sy + (p.y - p.sy) * a;
-                let z = p.sz + (p.z - p.sz) * a;
-
-                // Expressão: as sobrancelhas acesas se movem com o humor.
-                if (p.brow) {
-                    const inner = 1 - Math.min(1, Math.abs(p.x) / 0.5);
-                    // Sorriso de repouso: leve arqueada amistosa mesmo no
-                    // neutro (acentua o arco externo) pra não parecer triste;
-                    // some quando sério.
-                    y -= 0.011 * (0.5 + 0.5 * (1 - inner)) * (1 - sr);
-                    if (p.x < 0)
-                        y -= 0.05 * th;
-                    else
-                        y += 0.008 * th;
-                    y += 0.045 * sr * inner;
-                    y -= 0.05 * hp;      // feliz: ergue junto com a meia-lua
-                }
-                if (p.cheek)
-                    y -= 0.018 * hp;
-
-                x += wobble * Math.sin(t * 1.6 + p.seed);
-                y += wobble * Math.cos(t * 1.3 + p.seed * 1.7);
-
-                const dz = z - zCenter;
-                const xr = x * cosY + dz * sinY;
-                const zr = -x * sinY + dz * cosY;
-                const yr = y * cosX - zr * sinX;
-                const zr2 = y * sinX + zr * cosX;
-
-                const persp = 1.7 / (1.7 - zr2 * 0.55);
-                const px = cx + xr * scale * persp;
-                const py = cy + yr * scale * persp;
-
-                // Malha fina e discreta; contorno da máscara e feições
-                // (sobrancelha/nariz/lábios) acendem como na referência.
-                let bright = (0.07 + p.z * 0.34
-                              + Math.pow(p.e, 8) * 0.70
-                              + p.boost * 0.70
-                              + zr2 * 0.20)
-                             * flicker * (0.25 + 0.75 * a);
-                bright = Math.min(1, Math.max(0, bright));
-                const size = (0.36 + p.z * 0.46
-                              + Math.pow(p.e, 8) * 0.42
-                              + p.boost * 0.46) * persp * sizeK;
-                buckets[Math.min(7, Math.floor(bright * 8))].push(px, py, size);
-            }
-
-            for (let b = 0; b < 8; b++) {
-                const list = buckets[b];
-                if (list.length === 0)
+            // -- suaviza canais e aplica morphs sobre a base --
+            const work = root._work;
+            work.set(root._pos);
+            for (const name of root._morphNames) {
+                const ch = root._cur[name];
+                let target = ch.tgt;
+                if (name === "blink")
+                    target = Math.min(1, ch.tgt + blinkEnv);
+                if (name === "jawOpen")
+                    target = Math.min(1, ch.tgt + jawTalk);
+                if (name === "eyeWide" && root.listening)
+                    target = Math.min(1, target + 0.3);
+                ch.cur = root._damp(ch.cur, target, name === "blink" ? 26 : 7, dt);
+                if (ch.cur < 0.004)
                     continue;
-                const lum = (b + 1) / 8;
-                const mix = lum * lum * 0.65;
-                const rr = Math.round(br + (255 - br) * mix);
-                const gg = Math.round(bg + (255 - bg) * mix);
-                const bb2 = Math.round(bb + (255 - bb) * mix);
-                ctx.fillStyle = "rgba(" + rr + "," + gg + "," + bb2 + ","
-                                + (0.20 + 0.80 * lum).toFixed(3) + ")";
-                for (let j = 0; j < list.length; j += 3)
-                    ctx.fillRect(list[j], list[j + 1], list[j + 2], list[j + 2]);
-            }
-
-            // Projeção de um ponto do rosto pra tela (olhos/boca).
-            const proj = function (u, v, z) {
-                const dz = z - zCenter;
-                const xr = u * cosY + dz * sinY;
-                const zr = -u * sinY + dz * cosY;
-                const yr = v * cosX - zr * sinX;
-                const zr2 = v * sinX + zr * cosX;
-                const pp = 1.7 / (1.7 - zr2 * 0.55);
-                return [cx + xr * scale * pp, cy + yr * scale * pp];
-            };
-
-            const featA = (0.25 + 0.75 * root._assemble) * flicker;
-            const cr = Math.round(br + (255 - br) * 0.92);
-            const cg = Math.round(bg + (255 - bg) * 0.92);
-            const cb = Math.round(bb + (255 - bb) * 0.92);
-
-            // Cada ponto de olho/boca dispersa e remonta como a malha:
-            // interpola da posição espalhada pro alvo com atraso individual.
-            let fi = 0;
-            const featDot = function (tu, tv, tz) {
-                const sc = root._featScatter[fi++ % root._featScatter.length];
-                let af = root._assemble * 1.2 - (sc.seed / 6.283) * 0.2;
-                af = Math.min(1, Math.max(0, af));
-                af = 1 - Math.pow(1 - af, 3);
-                return proj(sc.sx + (tu - sc.sx) * af,
-                            sc.sy + (tv - sc.sy) * af,
-                            sc.sz + (tz - sc.sz) * af);
-            };
-
-            // ---------------- olhos (nuvem de pontos) ----------------
-            // Fendas amendoadas finas e MUITO acesas, como na referência;
-            // feliz vira arco ^, sério estreita e inclina, pensativo sobe.
-            const openness = Math.max(0.25, 1 - 0.30 * th - 0.55 * sr);
-            const eyeW = 0.115, eyeH = 0.075 * openness;
-
-            for (let side = -1; side <= 1; side += 2) {
-                const ecx = side * 0.26;
-                const ecy = -0.05 - 0.05 * th;
-                const tilt = side * sr * -0.14;
-                const ct = Math.cos(tilt), st = Math.sin(tilt);
-
-                const gpos = proj(ecx, ecy, root._eyeZ);
-                const gr = scale * 0.17;
-                const eg = ctx.createRadialGradient(gpos[0], gpos[1], 0, gpos[0], gpos[1], gr);
-                // O halo só existe com o rosto montado (some na dissolução).
-                eg.addColorStop(0, rgba(0.40 * featA * root._assemble));
-                eg.addColorStop(1, rgba(0));
-                ctx.fillStyle = eg;
-                ctx.fillRect(gpos[0] - gr, gpos[1] - gr, gr * 2, gr * 2);
-
-                ctx.fillStyle = "rgba(" + cr + "," + cg + "," + cb + ","
-                                + (0.95 * featA).toFixed(3) + ")";
-                const eCols = 15;
-                for (let r = -1; r <= 1; r++) {
-                    for (let i = 0; i < eCols; i++) {
-                        const hx = -1 + 2 * i / (eCols - 1);
-                        const almond = Math.pow(Math.max(0, 1 - hx * hx), 0.6);
-                        let ey0 = r * 0.5 * almond * eyeH;
-                        const bend = -almond * eyeH * 1.9 + r * 0.15 * eyeH;
-                        ey0 = ey0 * (1 - hp) + bend * hp;
-                        const ex0 = hx * eyeW;
-                        const rx = ex0 * ct - ey0 * st;
-                        const ry = ex0 * st + ey0 * ct;
-                        // Profundidade da SUPERFÍCIE do rosto neste ponto —
-                        // os cantos do olho recuam com a curvatura da máscara.
-                        const esd = root._depth(ecx + rx, ecy + ry);
-                        const ez = (esd !== null ? esd[0] : root._eyeZ) + 0.03;
-                        const pp = featDot(ecx + rx, ecy + ry, ez);
-                        const sz = (0.85 + 0.85 * almond) * sizeK;
-                        ctx.fillRect(pp[0], pp[1], sz, sz);
-                    }
+                const idx = root._morphs[name].idx;
+                const del = root._morphs[name].del;
+                const v = ch.cur;
+                for (let j = 0; j < idx.length; j++) {
+                    const pi = idx[j] * 3, di = j * 3;
+                    work[pi] += del[di] * v;
+                    work[pi + 1] += del[di + 1] * v;
+                    work[pi + 2] += del[di + 2] * v;
                 }
             }
 
-            // ---------------- boca (patch de lábios em pontos) ----------------
-            // Lábios de verdade: superior com arco do cupido, inferior mais
-            // cheio, preenchidos por fileiras de pontos — e cada ponto tem a
-            // própria profundidade (os lábios saltam da máscara e ganham
-            // paralaxe ao girar). Cantos sobem (feliz) / caem (sério),
-            // desloca no pensativo e abre com o envelope de fala.
-            // Falando, os trejeitos de humor da boca (de lado, inclinada,
-            // estreita) são suavemente zerados — a articulação é neutra.
-            const thM = th * (1 - root._wSpeak);
-            const srM = sr * (1 - 0.6 * root._wSpeak);
-            const hpM = hp * (1 - 0.5 * root._wSpeak);
-            const mW = 0.185 * (1 - 0.22 * thM) * (1 - 0.15 * srM)
-                       * (1 + 0.10 * hpM) * (1 - 0.12 * talk);
-            const mShift = -0.045 * thM;
-            // Sorriso de repouso: um leve upturn dos cantos já no neutro (pra
-            // não parecer triste), que some quando sério e soma com o feliz.
-            const restSmile = 0.015 * (1 - srM);
-            const cornerYv = -restSmile - 0.05 * hpM + 0.018 * srM;
-            const centerYv = 0.018 * hpM;
-            const tiltY = 0.014 * thM;
-            const mv = 0.63;
-            const openAmt = talk * 0.055;
+            // -- pose da cabeça: leve balanço + olhar --
+            const yaw = root._gazeX * 0.5 + Math.sin(t * 0.31) * 0.06;
+            const pitch = -root._gazeY * 0.4 + Math.sin(t * 0.23 + 1.3) * 0.04;
+            const cyw = Math.cos(yaw), syw = Math.sin(yaw);
+            const cpi = Math.cos(pitch), spi = Math.sin(pitch);
+            const breathe = 1 + Math.sin(t * 0.7) * 0.006;
 
-            const lipSoft = [];      // corpo dos lábios (tênue)
-            const lipCore = [];      // linha da boca / bordas / cristas (aceso)
-            const mCols = 25;
-            for (let i = 0; i < mCols; i++) {
-                const s = -1 + 2 * i / (mCols - 1);
-                const as2 = s * s;
-                const bell = 1 - as2;
-                const expY = centerYv + (cornerYv - centerYv) * as2 + tiltY * s;
-                const xs = mShift + s * mW;
-                const yMid = mv + expY + 0.004 * bell;
+            const lx = 0.3, ly = 0.34, lz = 0.89;   // luz frontal + canto sup-esq
+            const cx = W / 2, cy = H / 2;
 
-                // Borda superior do lábio com ARCO DO CUPIDO anatômico: duas
-                // cristas (em |s|≈0.30) e o entalhe do filtro no centro (s=0),
-                // afunilando liso até os cantos.
-                const crest = Math.exp(-Math.pow((Math.abs(s) - 0.30) / 0.20, 2));
-                const philtrum = 0.60 * Math.exp(-as2 / 0.014);
-                const cupid = Math.max(0, bell * (0.50 + 0.62 * crest - philtrum));
-                const upH = 0.050 * cupid;                        // altura do lábio superior
-                const loH = 0.052 * Math.pow(bell, 0.55);         // inferior mais cheio/redondo
+            const bx = root._bx, by = root._by, bcount = root._bcount;
+            bcount.fill(0);
+            const nor = root._nor, ao = root._ao, tw = root._twinkle;
 
-                // Articulação de mandíbula: o lábio inferior desce bem mais
-                // do que o superior sobe (como uma boca humana falando).
-                // Cada ponto do lábio assenta na SUPERFÍCIE do rosto (a boca
-                // acompanha o contorno quando a cabeça gira) + relevo leve.
-                // Lábio superior: 4 fileiras (borda do cupido → linha da boca).
-                // r=0 é a borda externa (a crista do cupido) e r=3 a linha da
-                // boca — ambas ACESAS pra riscar o contorno em "M"; o miolo
-                // (r=1,2) é corpo tênue.
-                for (let r = 0; r < 4; r++) {
-                    const k = r / 3;                              // 0 borda cupido → 1 linha da boca
-                    const y = yMid - openAmt * 0.30 * bell - upH * (1 - k);
-                    const sd = root._depth(xs, y);
-                    const zL = (sd !== null ? sd[0] : root._mouthZ)
-                               + 0.016 * bell * (0.4 + 0.6 * k);
-                    const pp = featDot(xs, y, zL);
-                    (r === 0 || r === 3 ? lipCore : lipSoft)
-                        .push(pp[0], pp[1], (0.62 + 0.42 * bell) * sizeK);
-                }
-                // Lábio inferior: 4 fileiras (linha da boca → borda de baixo).
-                // r=0 é a linha da boca e r=3 a borda inferior arredondada —
-                // as duas acesas contornam o volume; as do meio são o corpo.
-                for (let r = 0; r < 4; r++) {
-                    const k = r / 3;                              // 0 linha da boca → 1 borda
-                    const y = yMid + openAmt * 1.0 * bell + loH * k;
-                    const sd = root._depth(xs, y);
-                    const zL = (sd !== null ? sd[0] : root._mouthZ)
-                               + 0.024 * bell * (1 - 0.45 * k);
-                    const pp = featDot(xs, y, zL);
-                    (r === 0 || r === 3 ? lipCore : lipSoft)
-                        .push(pp[0], pp[1], (0.62 + 0.42 * bell) * (1 - 0.15 * k) * sizeK);
-                }
+            for (let i = 0; i < N; i++) {
+                const i3 = i * 3;
+                const x = work[i3], y = work[i3 + 1], z = work[i3 + 2];
+                let X = x * cyw + z * syw;
+                let Z = -x * syw + z * cyw;
+                let Y = y * cpi - Z * spi;
+                Z = y * spi + Z * cpi;
+
+                const nx0 = nor[i3], ny0 = nor[i3 + 1], nz0 = nor[i3 + 2];
+                let nX = nx0 * cyw + nz0 * syw;
+                let nZ = -nx0 * syw + nz0 * cyw;
+                const nY = ny0 * cpi - nZ * spi;
+                nZ = ny0 * spi + nZ * cpi;
+                if (nZ < 0.02)
+                    continue;   // back-face cull → silhueta limpa
+
+                const persp = 1 / (1 - Z * 0.34);
+                const sx = cx + X * R * persp * breathe;
+                const sy = cy - Y * R * persp * breathe;
+
+                const facing = nZ > 0 ? nZ : 0;
+                const diffuse = Math.max(0, nX * lx + nY * ly + nZ * lz);
+                const a = ao[i];
+                let bright = (0.08 + 1.05 * (0.55 * facing * facing + 0.45 * diffuse)) * a * a * a;
+                bright *= 0.94 + 0.06 * Math.sin(t * 1.7 + tw[i]);
+                bright *= 0.62 + persp * 0.38;
+                if (bright > 1)
+                    bright = 1;
+
+                let lvl = (bright * LV) | 0;
+                if (lvl >= LV)
+                    lvl = LV - 1;
+                if (lvl < 0)
+                    lvl = 0;
+                const k = bcount[lvl]++;
+                bx[lvl][k] = sx;
+                by[lvl][k] = sy;
             }
-            ctx.fillStyle = "rgba(" + cr + "," + cg + "," + cb + ","
-                            + (0.70 * featA).toFixed(3) + ")";
-            for (let j = 0; j < lipCore.length; j += 3)
-                ctx.fillRect(lipCore[j], lipCore[j + 1], lipCore[j + 2], lipCore[j + 2]);
-            ctx.fillStyle = "rgba(" + cr + "," + cg + "," + cb + ","
-                            + (0.32 * featA).toFixed(3) + ")";
-            for (let j = 0; j < lipSoft.length; j += 3)
-                ctx.fillRect(lipSoft[j], lipSoft[j + 1], lipSoft[j + 2], lipSoft[j + 2]);
+
+            // -- desenha --
+            ctx.clearRect(0, 0, W, H);
+            ctx.globalCompositeOperation = "lighter";
+            for (let lvl = 0; lvl < LV; lvl++) {
+                const count = bcount[lvl];
+                if (!count)
+                    continue;
+                ctx.fillStyle = root._palette[lvl];
+                const xs = bx[lvl], ys = by[lvl];
+                const s = lvl >= LV - 2 ? dotSize + 1 : dotSize;
+                for (let k = 0; k < count; k++)
+                    ctx.fillRect(xs[k], ys[k], s, s);
+            }
+            ctx.globalCompositeOperation = "source-over";
         }
     }
 
