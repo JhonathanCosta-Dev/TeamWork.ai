@@ -272,6 +272,175 @@ Column {
     }
 
     // ------------------------------------------------------------------
+    // Câmera / rastreamento facial (opt-in, 100% local)
+    // ------------------------------------------------------------------
+    Row {
+        spacing: 8
+        Text {
+            text: "Câmera (rastreamento facial)"
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeLarge
+            font.bold: true
+        }
+        // Indicador de câmera ativa (bolinha vermelha "REC").
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.store.cameraEnabled
+            width: recRow.implicitWidth + 12
+            height: 18
+            radius: 9
+            color: Qt.alpha(Theme.danger, 0.2)
+            border.width: 1
+            border.color: Theme.danger
+            Row {
+                id: recRow
+                anchors.centerIn: parent
+                spacing: 4
+                Rectangle {
+                    width: 8; height: 8; radius: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.danger
+                }
+                Text {
+                    text: "câmera ligada"
+                    color: Theme.danger
+                    font.pixelSize: Theme.fontSizeSmall - 1
+                    font.family: Theme.fontFamily
+                }
+            }
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "Ligue pra que o avatar te siga com o olhar no descanso de tela. Os frames NUNCA saem do PC — só a posição do rosto e as expressões vão pro avatar. Requer o setup: scripts/setup-facetrack.sh"
+        color: Theme.textSecondary
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
+    // Toggle: ligar a câmera.
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: 10
+            color: root.store.cameraEnabled ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: 8
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.cameraEnabled ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    root.store.cameraEnabled = !root.store.cameraEnabled;
+                    if (!root.store.cameraEnabled)
+                        root.store.puppetMode = false;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Ativar câmera (avatar olha pra você)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Toggle: modo fantoche (só com câmera ligada).
+    Row {
+        spacing: 8
+        opacity: root.store.cameraEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: 10
+            color: root.store.puppetMode ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: 8
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.puppetMode ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.cameraEnabled)
+                        return;
+                    root.store.puppetMode = !root.store.puppetMode;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Modo fantoche (o avatar espelha seu rosto — calibra as emoções)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Botão: cadastrar meu rosto (reconhecimento) + status.
+    Row {
+        spacing: 8
+        Rectangle {
+            id: enrollBtn
+            width: enrollText.implicitWidth + 24
+            height: 30
+            radius: Theme.radiusSmall
+            color: root.store.cameraEnabled ? Qt.alpha(Theme.accent, 0.25) : Theme.surfaceAlt
+            border.width: 1
+            border.color: root.store.cameraEnabled ? Theme.accent : Theme.border
+            opacity: root.store.cameraEnabled ? 1.0 : 0.5
+            Text {
+                id: enrollText
+                anchors.centerIn: parent
+                text: "Cadastrar meu rosto"
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeSmall
+                font.family: Theme.fontFamily
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: if (root.store.cameraEnabled) root.store.enrollFace()
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.store.faceStatus.length > 0 ? root.store.faceStatus
+                : (root.store.faceOwner === 1 ? "reconheci você ✓"
+                : (root.store.faceOwner === 0 ? "rosto não reconhecido" : ""))
+            color: root.store.faceOwner === 1 ? Theme.success : Theme.textDisabled
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Rectangle {
+        width: parent.width
+        height: 1
+        color: Theme.border
+    }
+
+    // ------------------------------------------------------------------
     // Chaves de API (write-only: a chave nunca é exibida de volta)
     // ------------------------------------------------------------------
 

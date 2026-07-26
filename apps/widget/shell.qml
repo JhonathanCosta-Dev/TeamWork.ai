@@ -145,12 +145,21 @@ ShellRoot {
                         active: panel.visible
                     }
 
+                    // Rastreamento facial por webcam (opt-in). Ativo só no
+                    // painel visível e com a câmera ligada nas configurações.
+                    FaceTrackService {
+                        id: faceSvc
+                        store: appStore
+                        active: panel.visible
+                    }
+
                     FullscreenView {
                         id: fullscreenView
                         anchors.fill: parent
                         visible: appStore.fullscreen
                         store: appStore
                         voice: voiceSvc
+                        faceTrack: faceSvc
                         screens: Quickshell.screens
                         onExitFullscreen: {
                             appStore.fullscreen = false;

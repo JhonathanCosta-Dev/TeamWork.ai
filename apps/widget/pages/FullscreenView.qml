@@ -17,11 +17,23 @@ Rectangle {
     // Serviço de voz compartilhado do painel (instanciado no shell — um só
     // por monitor visível; instanciar aqui duplicava microfone e voz).
     required property var voice
+    // Rastreamento facial por webcam (instanciado no shell). Opt-in.
+    required property var faceTrack
     signal exitFullscreen()
     signal collapseAll()
 
     // Descanso de tela: só o rosto do Jorginho, gigante e vivo.
     property bool screensaver: false
+
+    // Segue o rosto na webcam? Só com câmera ligada, rosto presente e desde
+    // que NÃO seja um estranho reconhecido (owner 0). Owner 1 (você) ou -1
+    // (sem reconhecimento) → segue.
+    readonly property bool faceFollow: root.store.cameraEnabled
+                                       && root.faceTrack.present
+                                       && root.store.faceOwner !== 0
+    readonly property bool puppetOn: root.store.cameraEnabled
+                                     && root.store.puppetMode
+                                     && root.faceTrack.present
 
     color: Qt.rgba(0.05, 0.06, 0.08, 0.97)
 
@@ -229,7 +241,16 @@ Rectangle {
                                                               : root.hologramMood
                         cycleAssemble: root.store.hologramCycle
                         speaking: root.hologramSpeaking || voice.phase === "speaking"
+                        // Rindo: a rajada do riso substitui a articulação de fala.
+                        laughing: voice.laughing
                         listening: voice.phase === "listening"
+                        // Rastreamento facial: segue o rosto na câmera e, no
+                        // modo fantoche, espelha suas expressões.
+                        lookActive: root.faceFollow
+                        lookAtX: root.faceTrack.faceX
+                        lookAtY: root.faceTrack.faceY
+                        puppet: root.puppetOn
+                        puppetBlend: root.faceTrack.blend
                     }
 
                     // Reações momentâneas → flash de emoção que volta sozinho.
@@ -511,7 +532,15 @@ Rectangle {
                  : (root.hologramMood !== "idle" ? root.hologramMood
                                                  : saver.idleMood)
             speaking: root.hologramSpeaking || voice.phase === "speaking"
+            // Rindo: a rajada do riso substitui a articulação de fala.
+            laughing: voice.laughing
             listening: voice.phase === "listening"
+            // No descanso, olha pra quem está na câmera; fantoche espelha.
+            lookActive: root.faceFollow
+            lookAtX: root.faceTrack.faceX
+            lookAtY: root.faceTrack.faceY
+            puppet: root.puppetOn
+            puppetBlend: root.faceTrack.blend
         }
 
         Text {

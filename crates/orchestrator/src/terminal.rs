@@ -15,6 +15,10 @@ pub struct TerminalReply {
     pub action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    /// Resposta pronta AQUI (não é só o "recebi, vou processar"): o widget pode
+    /// falar em voz alta na hora, sem esperar run.completed. Hoje só a saudação
+    /// local usa isto.
+    pub speak: bool,
 }
 
 impl TerminalReply {
@@ -23,11 +27,38 @@ impl TerminalReply {
             text: t.into(),
             action: None,
             run_id: None,
+            speak: false,
+        }
+    }
+
+    /// Resposta final e falável (saudação respondida localmente).
+    fn spoken(t: impl Into<String>) -> Self {
+        Self {
+            text: t.into(),
+            action: None,
+            run_id: None,
+            speak: true,
         }
     }
 }
 
+/// Nome do usuário, usado nas saudações ("Bom dia, Jhonathan!"). Ausente = sem
+/// nome; com tratamento na mensagem ("bom dia mano"), o tratamento manda.
+pub const USER_NAME_SETTING: &str = "user.name";
+
 impl Orchestrator {
+    /// Saudação pronta pra devolver na hora, se a mensagem for só isso.
+    async fn greeting_for(self: &Arc<Self>, text: &str) -> Option<String> {
+        let name = self
+            .storage
+            .get_setting(USER_NAME_SETTING)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| v.as_str().map(String::from));
+        crate::greeting::reply(text, name.as_deref())
+    }
+
     pub async fn handle_terminal_input(
         self: &Arc<Self>,
         input: &str,
@@ -152,18 +183,24 @@ impl Orchestrator {
                 text: String::new(),
                 action: Some("clear".into()),
                 run_id: None,
+                speak: false,
             }),
             Command::Settings => Ok(TerminalReply {
                 text: "Abrindo configurações…".into(),
                 action: Some("settings".into()),
                 run_id: None,
+                speak: false,
             }),
             Command::New { text } | Command::Run { text } | Command::Natural { text } => {
+                if let Some(hi) = self.greeting_for(&text).await {
+                    return Ok(TerminalReply::spoken(hi));
+                }
                 let run_id = self.submit(&text, &[]).await?;
                 Ok(TerminalReply {
                     text: format!("Tarefa criada em modo coordenado ({run_id})."),
                     action: None,
                     run_id: Some(run_id.to_string()),
+                    speak: false,
                 })
             }
             Command::Assign { agent, text } => {
@@ -176,6 +213,7 @@ impl Orchestrator {
                     text: format!("Tarefa delegada a {} ({run_id}).", a.name),
                     action: None,
                     run_id: Some(run_id.to_string()),
+                    speak: false,
                 })
             }
             Command::Mention { agents, text } => {
@@ -183,6 +221,10 @@ impl Orchestrator {
                     return Err(OrchestratorError::Invalid(
                         "descreva a tarefa após a menção".into(),
                     ));
+                }
+                // "@jorginho bom dia" é conversa, não tarefa: responde aqui.
+                if let Some(hi) = self.greeting_for(&text).await {
+                    return Ok(TerminalReply::spoken(hi));
                 }
                 let mut ids = Vec::new();
                 let mut names = Vec::new();
@@ -208,6 +250,7 @@ impl Orchestrator {
                     text: format!("Tarefa enviada para {} ({run_id}).", names.join(", ")),
                     action: None,
                     run_id: Some(run_id.to_string()),
+                    speak: false,
                 })
             }
             Command::Workspace { path } => {

@@ -20,12 +20,26 @@ Item {
     property var agent: null
     property bool speaking: false
     property bool listening: false
+    // Rindo: a mandíbula ganha a rajada do riso ("ha-ha-ha") em vez da
+    // articulação de fala, e a cabeça sacode junto. Independente de `speaking`
+    // porque rir tem ritmo próprio — mais rápido, mais aberto e pulsado.
+    property bool laughing: false
     // Emoção atual (persistente). Uma das chaves de _emotions abaixo.
     property string mood: "neutral"
     // Modo "descanso de tela": olhar vaga mais amplo.
     property bool idleShow: false
     // Aceito por compatibilidade com chamadas antigas; sem efeito na v3.
     property bool cycleAssemble: true
+
+    // Olhar externo (rastreamento facial): com lookActive, o avatar OLHA pra
+    // lookAtX/Y [-1..1] em vez de vaguear sozinho (segue quem está na câmera).
+    property bool lookActive: false
+    property real lookAtX: 0
+    property real lookAtY: 0
+    // Modo fantoche: com puppet, os canais são dirigidos por puppetBlend
+    // (blendshapes do rosto real) em vez do catálogo de emoções.
+    property bool puppet: false
+    property var puppetBlend: ({})
 
     // Catálogo de emoções (spec Jorginho v3). Cada emoção define:
     //   color: cor do holograma
@@ -52,6 +66,11 @@ Item {
         "confused":   { color: "#e0a860", g: [0.2, 0.1],   w: 0.7, bl: [2.0, 4.0], hold: 0,   ret: "",          ch: { browDown: 0.4, browOuterUpR: 0.4, eyeSquint: 0.2, jawOpen: 0.07, frown: 0.14, lipPress: 0.12 } },
         "happy":      { color: "#7fe08a", g: [0, 0],       w: 0.4, bl: [3.0, 5.5], hold: 0,   ret: "",          ch: { smile: 0.7, cheek: 0.5, eyeSquint: 0.35, browUp: 0.05 } },
         "excited":    { color: "#6fe870", g: [0, 0],       w: 0.4, bl: [1.5, 3.0], hold: 0,   ret: "",          ch: { smile: 0.9, cheek: 0.6, eyeWide: 0.4, browUp: 0.2, browOuterUpL: 0.4, browOuterUpR: 0.4, jawOpen: 0.1 } },
+        // Rir: sorriso no máximo, bochecha estufada e olhos APERTADOS (blink de
+        // base fecha a pálpebra — quem ri de verdade não ri com o olho arregalado).
+        // jawOpen fica baixo aqui de propósito: a abertura vem pulsada do ritmo
+        // do riso, senão a boca ficaria escancarada e parada.
+        "laughing":   { color: "#86efa0", g: [0, -0.06],   w: 0.3, bl: [2.0, 4.0], hold: 2.2, ret: "",          ch: { smile: 0.95, cheek: 0.75, eyeSquint: 0.7, blink: 0.3, browUp: 0.25, browOuterUpL: 0.35, browOuterUpR: 0.35, jawOpen: 0.08 } },
         "concerned":  { color: "#ffa860", g: [0, 0.05],    w: 0.4, bl: [3.5, 6.5], hold: 0,   ret: "",          ch: { browUp: 0.6, browDown: 0.14, frown: 0.35, lipPress: 0.2 } },
         "empathetic": { color: "#9fb0e8", g: [0, 0.05],    w: 0.3, bl: [4.0, 7.0], hold: 0,   ret: "",          ch: { browUp: 0.4, eyeSquint: 0.15, smile: 0.08, blink: 0.12 } },
         "serious":    { color: "#ff8a6e", g: [0, 0],       w: 0.2, bl: [4.0, 7.0], hold: 0,   ret: "",          ch: { browDown: 0.3, eyeSquint: 0.1 } },
@@ -283,7 +302,7 @@ Item {
     // ~22fps ocioso — segura a CPU com a malha densa (9000 pontos) sem perder
     // fluidez quando importa.
     Timer {
-        interval: (root.speaking || root.listening) ? 33 : 45
+        interval: (root.speaking || root.listening || root.laughing) ? 33 : 45
         running: root.visible && root._ready
         repeat: true
         onTriggered: {
@@ -333,37 +352,64 @@ Item {
             }
             const blinkEnv = Math.max(0, 1 - Math.abs(root._blinkT - 0.07) / 0.07);
 
-            root._nextSaccade -= dt;
-            if (root._nextSaccade < 0) {
-                // Vaguear em torno do olhar de repouso da emoção; idleShow amplia.
-                const amp = root._wander * (root.idleShow ? 1.5 : 1.0);
-                root._nextSaccade = 1.5 + Math.random() * 4;
-                root._gazeTX = root._baseGazeX + (Math.random() - 0.5) * 0.5 * amp;
-                root._gazeTY = root._baseGazeY + (Math.random() - 0.5) * 0.24 * amp;
+            if (root.lookActive) {
+                // Segue quem está na webcam. A imagem da câmera é crua (não
+                // espelhada), então inverte o X pra SEGUIR o usuário (olhar
+                // pra onde ele está), não espelhar. Y (cima/baixo) fica igual.
+                root._gazeTX = -root.lookAtX * 0.9;
+                root._gazeTY = root.lookAtY * 0.6;
+            } else {
+                root._nextSaccade -= dt;
+                if (root._nextSaccade < 0) {
+                    // Vaguear em torno do olhar de repouso; idleShow amplia.
+                    const amp = root._wander * (root.idleShow ? 1.5 : 1.0);
+                    root._nextSaccade = 1.5 + Math.random() * 4;
+                    root._gazeTX = root._baseGazeX + (Math.random() - 0.5) * 0.5 * amp;
+                    root._gazeTY = root._baseGazeY + (Math.random() - 0.5) * 0.24 * amp;
+                }
             }
-            root._gazeX = root._damp(root._gazeX, root._gazeTX, 3, dt);
-            root._gazeY = root._damp(root._gazeY, root._gazeTY, 3, dt);
+            // Segue rápido quando rastreando um rosto; suave no repouso.
+            const gazeLambda = root.lookActive ? 6 : 3;
+            root._gazeX = root._damp(root._gazeX, root._gazeTX, gazeLambda, dt);
+            root._gazeY = root._damp(root._gazeY, root._gazeTY, gazeLambda, dt);
 
             let jawTalk = 0;
-            if (root.speaking) {
+            let laughBob = 0;
+            if (root.laughing) {
+                // Rajada do riso: sílabas mais rápidas e mais abertas que a fala,
+                // moduladas por um envelope lento — o riso vem em ondas, não num
+                // ritmo de metrônomo. O expoente < 1 encurta o fechamento, o que
+                // dá o "ha!" seco em vez de um bocejo senoidal.
+                root._talkPhase += dt * 17;
+                const syl = Math.pow(Math.abs(Math.sin(root._talkPhase)), 0.65);
+                const wave = 0.62 + 0.38 * Math.abs(Math.sin(root._talkPhase * 0.17));
+                jawTalk = 0.1 + 0.34 * syl * wave;
+                laughBob = syl * wave;
+            } else if (root.speaking) {
                 root._talkPhase += dt * 11;
                 jawTalk = 0.1 + 0.16 * Math.abs(Math.sin(root._talkPhase)
                                                 * Math.sin(root._talkPhase * 0.37 + 1.7));
             }
+
+            // Modo fantoche: os alvos dos canais vêm do rosto real (puppetBlend)
+            // em vez da emoção. Serve pra você calibrar como cada expressão mexe.
+            const pup = root.puppet;
+            const pb = root.puppetBlend;
 
             // -- suaviza canais e aplica morphs sobre a base --
             const work = root._work;
             work.set(root._pos);
             for (const name of root._morphNames) {
                 const ch = root._cur[name];
-                let target = ch.tgt;
+                let target = pup ? (pb[name] !== undefined ? pb[name] : 0) : ch.tgt;
                 if (name === "blink")
-                    target = Math.min(1, ch.tgt + blinkEnv);
-                if (name === "jawOpen")
-                    target = Math.min(1, ch.tgt + jawTalk);
-                if (name === "eyeWide" && root.listening)
+                    target = Math.min(1, target + blinkEnv);
+                if (name === "jawOpen" && !pup)
+                    target = Math.min(1, target + jawTalk);
+                if (name === "eyeWide" && root.listening && !pup)
                     target = Math.min(1, target + 0.3);
-                ch.cur = root._damp(ch.cur, target, name === "blink" ? 26 : 7, dt);
+                // No fantoche a resposta é mais direta (menos suavização).
+                ch.cur = root._damp(ch.cur, target, name === "blink" ? 26 : (pup ? 14 : 7), dt);
                 if (ch.cur < 0.004)
                     continue;
                 const idx = root._morphs[name].idx;
@@ -378,14 +424,20 @@ Item {
             }
 
             // -- pose da cabeça: leve balanço + olhar --
-            const yaw = root._gazeX * 0.5 + Math.sin(t * 0.31) * 0.06;
-            const pitch = -root._gazeY * 0.4 + Math.sin(t * 0.23 + 1.3) * 0.04;
+            // Rindo, a cabeça joga pra trás (pitch positivo = olhando pra cima)
+            // e sacode no ritmo das sílabas — é o que separa "boca abrindo" de
+            // "rindo de verdade".
+            const yaw = root._gazeX * 0.5 + Math.sin(t * 0.31) * 0.06
+                      + laughBob * 0.03;
+            const pitch = -root._gazeY * 0.4 + Math.sin(t * 0.23 + 1.3) * 0.04
+                        + (root.laughing ? 0.05 + laughBob * 0.06 : 0);
             const cyw = Math.cos(yaw), syw = Math.sin(yaw);
             const cpi = Math.cos(pitch), spi = Math.sin(pitch);
             const breathe = 1 + Math.sin(t * 0.7) * 0.006;
 
             const lx = 0.3, ly = 0.34, lz = 0.89;   // luz frontal + canto sup-esq
-            const cx = W / 2, cy = H / 2;
+            // Quicada vertical do riso (o corpo inteiro sacode, não só a boca).
+            const cx = W / 2, cy = H / 2 + laughBob * R * 0.022;
 
             const bx = root._bx, by = root._by, bcount = root._bcount;
             bcount.fill(0);

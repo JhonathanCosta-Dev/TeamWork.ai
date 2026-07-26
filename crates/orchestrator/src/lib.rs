@@ -2,6 +2,7 @@
 //! dependências, cancelamento, retry, pausa, limites anti-loop e consolidação.
 
 pub mod files;
+pub mod greeting;
 pub mod knowledge;
 pub mod memory;
 mod planner;
@@ -1319,8 +1320,14 @@ impl Orchestrator {
         {
             if let Some(path) = v.as_str() {
                 let vroot = std::path::Path::new(path);
-                if let Some(vp) = knowledge::vault_prompt(vroot) {
-                    system_prompt.push_str(&vp);
+                // O "Como Agir" + índice custam ~10 KB de prompt, e medido no
+                // CLI isso quase DOBRA a latência da resposta (2,8 s → 5,3 s).
+                // Numa pergunta rápida ("que horas são") esse contexto não muda
+                // a resposta — então só entra quando o pedido é de trabalho.
+                if knowledge::needs_vault(&task.message) {
+                    if let Some(vp) = knowledge::vault_prompt(vroot) {
+                        system_prompt.push_str(&vp);
+                    }
                 }
                 // Skills sob demanda: nota citada pelo nome na mensagem
                 // entra inteira no prompt.

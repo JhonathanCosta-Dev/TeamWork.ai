@@ -50,6 +50,17 @@ Item {
     readonly property string _chimePath:
         Qt.resolvedUrl("../assets/wake-chime.wav").toString().replace(/^file:\/\//, "")
 
+    // IGNIÇÃO — ele só abre a boca se VOCÊ o chamou, de um destes quatro jeitos:
+    //   1. palavra de ativação ("fala jorginho")
+    //   2. botão do microfone
+    //   3. aceno pra câmera
+    //   4. mensagem digitada endereçada a ele (@jorginho)
+    // Sem ignição ele fica calado — resposta de tarefa antiga que chegou
+    // atrasada, piada dirigida a outro agente, evento de equipe: nada disso
+    // vira voz. A trava é consumida ao falar a resposta, então cada chamada
+    // rende UMA fala.
+    property bool _engaged: false
+
     property bool _awaitingReply: false
     property string _lastSpokenKey: ""
     property double _lastSpokenAt: 0
@@ -61,6 +72,9 @@ Item {
     property bool _wakeActive: false
     property double _wakeStartedAt: 0
     property int _wakeCrashes: 0
+    // true enquanto a saudação do aceno está tocando: ao terminar, começa a
+    // ouvir a resposta da pessoa.
+    property bool _greetPending: false
 
     // Voz neural: o servidor XTTS carrega o modelo uma vez e fica de pé; cada
     // fala custa só a inferência. _synthGen numera os pedidos pra descartar
@@ -71,9 +85,32 @@ Item {
     property double _xttsStartedAt: 0
     property string _pendingSpeak: ""
     property int _synthGen: 0
+    // Fila de partes da fala atual: o servidor entrega UMA FRASE por vez, e ele
+    // já começa a falar a primeira enquanto o resto ainda está sintetizando
+    // (medido: 4 frases levam 3,3 s no total, mas a 1ª sai em 0,7 s).
+    property var _audioQueue: []
+    property bool _audioMore: false
     // Frases-muleta pré-sintetizadas ("Claro, deixa eu pensar…") tocadas
     // enquanto o agente ainda processa a resposta real.
     property var _fillers: []
+
+    // Riso: clipes prontos (gravados pelo usuário ou sintetizados no boot).
+    // `laughing` é lido pelo avatar — a boca ganha a rajada do riso e a cabeça
+    // sacode. O que sobrar da resposta depois da risada fica em _afterLaugh e
+    // é falado quando o clipe termina.
+    property bool laughing: false
+    property var _laughs: []
+    property string _afterLaugh: ""
+    // Última pergunta do usuário que já rendeu risada (não rir duas vezes).
+    property int _laughSeq: -1
+    // Marcadores de riso escritos, em UM só lugar: serve pra DETECTAR que a
+    // mensagem tem graça e pra TIRAR a onomatopeia da fala — se os dois padrões
+    // divergissem, ele leria "kkkk" em voz alta ou riria sem motivo. "rá" só
+    // com acento e repetido: "rara" é palavra ("coisa rara"), "rárá" não.
+    readonly property string _laughPattern:
+        "(?:k{3,}|\\b(?:ha\\s*){2,}h?\\b|\\b(?:rá\\s*){2,}\\b"
+        + "|\\b(?:hehe|hihi|huehue)\\w*|\\b(?:rs){2,}\\b"
+        + "|\\blol\\b|\\brisos\\b|😂|🤣|😆|😹)"
 
     function statusLabel() {
         switch (root.phase) {
@@ -104,6 +141,7 @@ Item {
             stopSpeaking();
         } else if (root.phase === "idle" || root.phase === "error") {
             root.errorText = "";
+            root._engaged = true;      // ignição 2: botão do microfone
             recorder.running = true;
             root.phase = "listening";
         }
@@ -112,7 +150,13 @@ Item {
     function stopSpeaking() {
         speaker.running = false;
         xttsPlayer.running = false;
+        fillerDelay.stop();
         root._pendingSpeak = "";
+        root._audioQueue = [];
+        root._audioMore = false;
+        root._afterLaugh = "";
+        root.laughing = false;
+        root._engaged = false;
         root.phase = "idle";
     }
 
@@ -181,6 +225,7 @@ Item {
     function _onWakeLine(line) {
         if (line === "WAKE") {
             root._wakeActive = true;
+            root._engaged = true;      // ignição 1: palavra de ativação
             root.errorText = "";
             root.phase = "listening";
             chime.running = true;
@@ -188,6 +233,12 @@ Item {
             // aparece ouvindo, como um assistente de verdade.
             if (!root.store.fullscreen)
                 root.store.fullscreen = true;
+        } else if (line === "CLAP") {
+            // Ignição 5: duas palmas. Bipe imediato (a síntese da saudação leva
+            // 1-3 s; sem o bipe a palma parece não ter sido ouvida) e depois ele
+            // cumprimenta e abre a escuta.
+            chime.running = true;
+            root.greetAndListen("Fala " + root._who() + ", mandou me chamar?");
         } else if (line.startsWith("DONE ")) {
             root._wakeActive = false;
             root.phase = "transcribing";
@@ -204,6 +255,75 @@ Item {
         command: ["pw-play", "--volume", "0.5", root._chimePath]
     }
 
+    // ------------------------------------------------------------------
+    // Interação por aceno: alguém acena pra webcam → o Jorginho cumprimenta
+    // e passa a ouvir a resposta da pessoa.
+    // ------------------------------------------------------------------
+    Connections {
+        target: root.store
+        function onWaveDetected() {
+            root.greetAndListen();
+        }
+    }
+
+    function greetAndListen(phrase) {
+        // Ocupado (falando/ouvindo/esperando resposta)? Ignora o chamado.
+        if (root.phase === "listening" || root.phase === "transcribing"
+                || root.phase === "waiting" || root._awaitingReply || root._greetPending)
+            return;
+        // Aparece na tela cheia pra pessoa ver o Jorginho respondendo.
+        if (!root.store.fullscreen)
+            root.store.fullscreen = true;
+        root._engaged = true;          // ignição 3 (aceno) / 5 (palmas)
+        root._greetPending = true;
+        root._greet((phrase && phrase.length > 0)
+                    ? phrase
+                    : "Olá! Tudo bem com você?");
+    }
+
+    // Como chamar a pessoa. Sem nome configurado, um tratamento neutro — melhor
+    // que um "Fala , mandou me chamar?" com buraco no meio.
+    function _who() {
+        const n = (root.store.userName ?? "").trim();
+        return n.length > 0 ? n : "chefe";
+    }
+
+    // Fala uma frase fixa (saudação) sem os guards de dedup/seq do speak().
+    function _greet(text) {
+        const s = _speechText(text);
+        if (s.length === 0) {
+            root._greetPending = false;
+            return;
+        }
+        root.speakMood = "happy";
+        if (root._xttsAvailable) {
+            if (root._xttsReady)
+                root._synthXtts(s);
+            else
+                root._pendingSpeak = s;   // solta no READY
+        } else {
+            root._speakPiper(s);
+        }
+    }
+
+    // Após a saudação, grava a resposta da pessoa (janela de ~6s).
+    function _startWaveListen() {
+        root._greetPending = false;
+        root.errorText = "";
+        recorder.running = true;
+        root.phase = "listening";
+        waveListenTimeout.restart();
+    }
+
+    // A gravação começa com um pré-buffer pra não cortar a primeira sílaba do
+    // comando, e isso às vezes traz a própria frase de ativação junto. Sem
+    // remover, o pedido chega como "fala jorginho abre o navegador".
+    function _stripWakePrefix(text) {
+        return text.replace(
+            /^\s*(?:(?:ei|oi|ol[áa]|fala|fale|falar)\s+)?(?:com\s+)?jorg\S*\s*[,.:;!?-]*\s*/i,
+            "");
+    }
+
     function _transcribe(path) {
         root.store.backend.call("voice.transcribe",
             { path: path, language: "pt" },
@@ -212,7 +332,8 @@ Item {
                     root._fail(err.message);
                     return;
                 }
-                const text = ((r && r.text) ? r.text : "").trim();
+                const raw = ((r && r.text) ? r.text : "").trim();
+                const text = root._stripWakePrefix(raw).trim();
                 if (text.length === 0) {
                     root._fail("não deu pra entender o áudio");
                     return;
@@ -220,16 +341,39 @@ Item {
                 root._awaitingReply = true;
                 root.phase = "waiting";
                 replyTimeout.restart();
-                // Retorno imediato por voz enquanto ele pensa na resposta real.
-                root._playFiller();
+                // "Deixa eu pensar um pouco" só entra em pedido grande E lento
+                // (ver fillerDelay); saudação e pergunta curta vão direto.
+                if (root._deservesFiller(text))
+                    fillerDelay.restart();
                 root.store.sendTerminal("@" + root.mention + " " + text);
             });
+    }
+
+    // O pedido merece um "deixa eu pensar"? Saudação e pergunta rápida, não —
+    // a muleta atrasaria em 3 segundos uma resposta que era pra ser imediata.
+    // Pedido de trabalho (verbo de ação, arquivo, frase longa), sim.
+    function _deservesFiller(text) {
+        const t = text.toLowerCase().trim();
+        // Saudação / agradecimento / recado curto: nunca.
+        if (/^(?:oi|ol[áa]|e a[íi]|fala|beleza|bom dia|boa tarde|boa noite|tudo bem|tudo bom|valeu|obrigad\w*|brigad\w*|tchau|at[ée] logo|obrigado)\b/.test(t))
+            return false;
+        const words = t.split(/\s+/).filter(w => w.length > 0).length;
+        if (words <= 6)
+            return false;                  // pergunta rápida
+        // Verbo de trabalho ou menção a arquivo/pasta = pedido de fato.
+        if (/\b(?:cri[ae]|criar|implementa\w*|refator\w*|analis\w*|revis\w*|pesquis\w*|procur\w*|busca\w*|corrig\w*|ajust\w*|test\w*|gera\w*|escrev\w*|compar\w*|audit\w*|migr\w*|instal\w*|configur\w*|otimiz\w*|documenta\w*|le[iy]a|ler|abre|abrir)\b/.test(t))
+            return true;
+        if (/\.\w{2,4}\b|\/\w+/.test(t))   // caminho ou nome de arquivo
+            return true;
+        return words >= 12;                // pedido longo mesmo sem verbo-chave
     }
 
     function _fail(msg) {
         root.errorText = msg;
         root.phase = "error";
         root._awaitingReply = false;
+        root._engaged = false;
+        fillerDelay.stop();
     }
 
     // A resposta final chega como linha kind="reply" com detail preenchido
@@ -243,14 +387,32 @@ Item {
                 return;
             const last = lines[lines.length - 1];
 
+            // Ignição 4: mensagem digitada endereçada a ele. Mensagem pra outro
+            // agente (ou pro coordenador) não acende nada — ele não se mete.
+            if (last.kind === "user" && root.store.lastUserMention === root.mention)
+                root._engaged = true;
+
+            // Você riu? Ele ri de volta na hora, antes da resposta chegar — é o
+            // que faz parecer conversa e não formulário. Uma risada por pergunta,
+            // e só se a piada foi dirigida a ele.
+            if (last.kind === "user"
+                    && root._engaged
+                    && root._laughSeq !== root.store.userInputSeq
+                    && root._isFunny(last.text ?? "")) {
+                root._laughSeq = root.store.userInputSeq;
+                root.laughNow();
+            }
+
             if (root._awaitingReply) {
                 if (last.kind === "error") {
                     root._awaitingReply = false;
                     replyTimeout.stop();
+                    fillerDelay.stop();
                     root.phase = "idle";
                 } else if (last.kind === "reply" && (last.detail ?? "").length > 0) {
                     root._awaitingReply = false;
                     replyTimeout.stop();
+                    fillerDelay.stop();   // chegou antes: nada de "deixa eu pensar"
                     root.speak(last.detail);
                 }
                 return;
@@ -268,11 +430,43 @@ Item {
         }
     }
 
+    // Rede de segurança da escuta: a vigília do microfone só roda com a fase em
+    // idle/error, então qualquer fase que travasse (daemon fora do ar durante a
+    // transcrição, player que nunca sai) deixava a ativação por voz MUDA até
+    // reiniciar o app. Passado o teto, volta pra idle e a escuta retoma.
+    Timer {
+        id: stuckGuard
+        // Transcrição é questão de segundos; fala longa (700 caracteres) pode
+        // passar de um minuto — daí o teto maior pra não cortar no meio.
+        interval: root.phase === "transcribing" ? 30000 : 120000
+        running: root.phase === "transcribing" || root.phase === "speaking"
+        onTriggered: {
+            root._awaitingReply = false;
+            root._greetPending = false;
+            root._engaged = false;
+            root.phase = "idle";
+        }
+    }
+
+    // A muleta só é dita se a resposta DEMORAR. Resposta rápida chega antes de
+    // o cronômetro estourar e ele responde direto, sem enrolação; pedido pesado
+    // passa deste teto e aí a espera ganha voz. Assim o critério é o tempo real,
+    // não um palpite sobre o tamanho do pedido.
+    Timer {
+        id: fillerDelay
+        interval: 2600
+        onTriggered: {
+            if (root._awaitingReply && root.phase === "waiting")
+                root._playFiller();
+        }
+    }
+
     Timer {
         id: replyTimeout
         interval: 180000
         onTriggered: {
             root._awaitingReply = false;
+            root._engaged = false;   // esperou 3 min: a chamada expirou
             if (root.phase === "waiting")
                 root.phase = "idle";
         }
@@ -301,6 +495,9 @@ Item {
         }).join("\n");
         // Código inline: mantém o conteúdo, tira as crases.
         s = s.replace(/`([^`]*)`/g, "$1");
+        // Riso escrito não é lido letra por letra ("kkkk", "hahaha", "rsrs") —
+        // quem ri é o clipe de risada, não a leitura da onomatopeia.
+        s = s.replace(new RegExp(root._laughPattern, "gi"), " ");
         // Links viram uma palavra, não a URL soletrada.
         s = s.replace(/https?:\/\/\S+/g, "um link");
         // Marcadores e numeração de lista no início da linha (senão "1." é
@@ -309,6 +506,16 @@ Item {
         s = s.replace(/^\s*\d+[.)]\s+/gm, "");
         // Ponto-e-vírgula e dois-pontos viram vírgula (pausa natural na fala).
         s = s.replace(/\s*[;:]\s*/g, ", ");
+        // Ponto DENTRO de um token não é pausa — é nome de arquivo, versão ou
+        // decimal, e aí o TTS fala "ponto" em voz alta ("main PONTO liquid",
+        // "quinze PONTO três PONTO zero"). Confirmado num round-trip
+        // TTS→Whisper: o ponto de fim de frase ele não lê (usa como pausa), o
+        // de dentro do token ele lê. Então só estes são desmontados.
+        s = s.replace(/\b\d+(?:\.\d+){2,}\b/g, function (m) {
+            return m.replace(/\./g, " ");      // versão 15.3.0 → "15 3 0"
+        });
+        s = s.replace(/(\d)\.(\d)/g, "$1,$2"); // decimal 1.8 → "1,8" (pt-BR)
+        s = s.replace(/(\w)\.(?=\w)/g, "$1 "); // main.liquid → "main liquid"
         // ALLOWLIST — a defesa final. Mantém SÓ letras (com acento pt-BR),
         // números, espaço e a pontuação de pausa (. , ! ?). Todo o resto —
         // emoji, símbolo, moeda, aspas, setas, markdown residual — vira espaço
@@ -357,14 +564,31 @@ Item {
         return "speaking";
     }
 
+    // O texto tem graça? Marcadores de riso escritos (do usuário ou do próprio
+    // agente) são o gatilho — é o sinal explícito de que a fala é pra ser rida,
+    // sem precisar de um classificador de humor.
+    function _isFunny(text) {
+        return new RegExp(root._laughPattern, "i").test(text);
+    }
+
     function speak(text) {
+        // Sem ignição, sem voz: resposta que chegou sozinha (tarefa antiga,
+        // conversa com outro agente) fica só escrita.
+        if (!root._engaged) {
+            if (root.phase === "waiting" || root.phase === "transcribing")
+                root.phase = "idle";
+            return;
+        }
         // No máximo UMA fala por pergunta do usuário: se este run já foi falado
         // (mesmo userInputSeq), ignora reconsolidações/eventos repetidos. É a
         // proteção forte contra "voz dupla".
         if (root.store.userInputSeq === root._spokenSeq)
             return;
+        const funny = root._isFunny(text);
         const s = _speechText(text);
-        if (s.length === 0) {
+        // Resposta que era SÓ risada some no filtro de fala — e ainda assim
+        // deve render um riso.
+        if (s.length === 0 && !funny) {
             root.phase = "idle";
             return;
         }
@@ -376,12 +600,62 @@ Item {
         root._spokenSeq = root.store.userInputSeq;
         root._lastSpokenKey = key;
         root._lastSpokenAt = now;
+        // Consome a ignição: esta chamada rendeu a fala dela. O que chegar
+        // depois (reconsolidação, run atrasado) precisa de um novo chamado.
+        root._engaged = false;
 
-        // Caminho preferido: voz neural (XTTS). Se o modelo ainda está
-        // carregando, enfileira a fala mais recente pra soltar no READY. Sem o
-        // XTTS instalado, o crash-guard desliga _xttsAvailable e cai no piper.
+        if (funny) {
+            root._laugh(s);      // ri primeiro, depois fala o resto
+            return;
+        }
+        root._say(s);
+    }
+
+    // Ri agora (reação imediata a uma piada do usuário), sem nada pra falar
+    // depois. Ignorado se ele já estiver ocupado — rir por cima da própria
+    // fala não é engraçado.
+    function laughNow() {
+        if (!root._engaged)
+            return;
+        if (root.phase !== "idle" && root.phase !== "error")
+            return;
+        root._laugh("");
+    }
+
+    // Toca um clipe de risada e agenda o que falar quando ele acabar.
+    function _laugh(after) {
+        if (root._laughs.length === 0) {
+            // Sem clipe pronto (XTTS ainda carregando ou indisponível): não
+            // inventa "há há há" em TTS na hora — só segue com a fala.
+            if (after.length > 0)
+                root._say(after);
+            else
+                root.phase = "idle";
+            return;
+        }
+        root._audioQueue = [];
+        root._audioMore = false;
+        root._afterLaugh = after;
+        root.speakMood = "laughing";
+        root.laughing = true;
+        if (xttsPlayer.running)
+            xttsPlayer.running = false;
+        xttsPlayer.command = ["pw-play", root._laughs[
+            Math.floor(Math.random() * root._laughs.length)]];
+        xttsPlayer.running = true;
+        root.phase = "speaking";
+    }
+
+    // Caminho preferido: voz neural (XTTS). Se o modelo ainda está carregando,
+    // enfileira a fala mais recente pra soltar no READY. Sem o XTTS instalado,
+    // o crash-guard desliga _xttsAvailable e cai no piper.
+    function _say(s) {
+        if (s.length === 0) {
+            root.phase = "idle";
+            return;
+        }
+        root.speakMood = _moodFromText(s);
         if (root._xttsAvailable) {
-            root.speakMood = _moodFromText(s);
             if (root._xttsReady) {
                 root._synthXtts(s);
             } else {
@@ -394,12 +668,21 @@ Item {
         root._speakPiper(s);
     }
 
-    // Manda o texto pro servidor XTTS; o áudio volta assíncrono em _onXttsLine.
+    function _playPart(path) {
+        xttsPlayer.command = ["pw-play", path];
+        xttsPlayer.running = true;
+        root.phase = "speaking";
+    }
+
+    // Manda o texto pro servidor XTTS; o áudio volta em partes (uma por frase)
+    // e é tocado na ordem, sem esperar a síntese inteira.
     function _synthXtts(s) {
         root._synthGen += 1;
+        root._audioQueue = [];
+        root._audioMore = true;
         if (xttsPlayer.running)
             xttsPlayer.running = false;   // corta a fala anterior na hora
-        root.phase = "waiting";           // "pensando…" durante a síntese (~1-3s)
+        root.phase = "waiting";           // até a 1ª frase ficar pronta (~0,7 s)
         xttsServer.write(root._synthGen + "\t" + s + "\n");
     }
 
@@ -418,13 +701,15 @@ Item {
         root.phase = "speaking";
     }
 
-    // Toca uma frase-muleta pré-sintetizada na hora (retorno imediato
-    // enquanto o agente pensa). Só o Jorginho tem voz, então isto roda só no
-    // fluxo dele. Sem fillers prontos ainda, não faz nada (o pedido real segue).
+    // Toca uma frase-muleta pré-sintetizada ("deixa eu pensar um pouco").
+    // Chamada só pelo fillerDelay — ou seja, só quando o pedido é de trabalho E
+    // a resposta passou do tempo. Sem fillers prontos, não faz nada.
     function _playFiller() {
         if (!root._xttsAvailable || root._fillers.length === 0)
             return;
         const path = root._fillers[Math.floor(Math.random() * root._fillers.length)];
+        root._audioQueue = [];
+        root._audioMore = false;
         if (xttsPlayer.running)
             xttsPlayer.running = false;
         xttsPlayer.command = ["pw-play", path];
@@ -437,6 +722,7 @@ Item {
             root._xttsReady = true;
             root._xttsCrashes = 0;
             root._fillers = [];               // servidor novo: recoleta os fillers
+            root._laughs = [];
             if (root._pendingSpeak.length > 0) {
                 const p = root._pendingSpeak;
                 root._pendingSpeak = "";
@@ -450,6 +736,18 @@ Item {
             const fs = root._fillers.slice();
             fs.push(rest.slice(sp + 1));
             root._fillers = fs;
+        } else if (line.startsWith("LAUGH ")) {
+            const rest = line.slice(6);
+            const sp = rest.indexOf(" ");
+            if (sp < 0)
+                return;
+            const ls = root._laughs.slice();
+            ls.push(rest.slice(sp + 1));
+            root._laughs = ls;
+        } else if (line.startsWith("AUDIO_END ")) {
+            const gen = parseInt(line.slice(10), 10);
+            if (gen === root._synthGen)
+                root._audioMore = false;      // acabou de chegar tudo
         } else if (line.startsWith("AUDIO ")) {
             const rest = line.slice(6);
             const sp = rest.indexOf(" ");
@@ -459,11 +757,14 @@ Item {
             const path = rest.slice(sp + 1);
             if (gen !== root._synthGen)
                 return;                       // fala já superada por outra
-            if (xttsPlayer.running)
-                xttsPlayer.running = false;
-            xttsPlayer.command = ["pw-play", path];
-            xttsPlayer.running = true;
-            root.phase = "speaking";
+            if (xttsPlayer.running) {
+                // Já falando: entra na fila e toca quando chegar a vez.
+                const q = root._audioQueue.slice();
+                q.push(path);
+                root._audioQueue = q;
+            } else {
+                root._playPart(path);
+            }
         } else if (line.startsWith("ERR ")) {
             if (root.phase === "waiting" || root.phase === "speaking")
                 root.phase = "idle";
@@ -492,10 +793,45 @@ Item {
     // Servidor de voz neural: carrega o XTTS-v2 uma vez e fica lendo pedidos no
     // stdin. Mesmo watchdog de órfão da vigília (kill 0 no grupo do setsid): se
     // o widget morrer, o python vai junto.
+    // Reinício controlado do servidor de voz. `running` é uma BINDING — atribuir
+    // nela imperativamente destruiria o binding e o servidor nunca voltaria;
+    // então o reinício passa por esta pausa, que o binding observa.
+    property bool _xttsPause: false
+    Timer {
+        id: xttsRestart
+        interval: 400
+        onTriggered: root._xttsPause = false
+    }
+    Connections {
+        target: root.store
+        // Trocou o timbre em runtime: sobe o servidor de novo pra ler o novo
+        // ambiente (o XTTS fixa o timbre na carga do modelo).
+        function onVoiceSpeakerChanged() {
+            if (!root.store.voiceSettingsLoaded)
+                return;
+            root._xttsPause = true;
+            root._xttsReady = false;
+            xttsRestart.restart();
+        }
+    }
+
     Process {
         id: xttsServer
         running: root.active && root._xttsAvailable
+                 && root.store.voiceSettingsLoaded && !root._xttsPause
         stdinEnabled: true
+        // Timbre e ritmo vêm das configurações; chave ausente = padrão do
+        // próprio servidor (passar string vazia faria o XTTS cair no primeiro
+        // timbre da lista, que não é o padrão desejado).
+        environment: {
+            const env = {};
+            const spk = (root.store.voiceSpeaker ?? "").trim();
+            if (spk.length > 0)
+                env["TEAMWORK_XTTS_SPEAKER"] = spk;
+            if (root.store.voiceSpeed > 0)
+                env["TEAMWORK_XTTS_SPEED"] = String(root.store.voiceSpeed);
+            return env;
+        }
         command: ["setsid", "bash", "-c",
             'PP=$PPID; '
             + '( while kill -0 "$PP" 2>/dev/null; do sleep 5; done; kill 0 ) & '
@@ -515,6 +851,35 @@ Item {
         onExited: {
             if (xttsPlayer.running)
                 return;
+            // Ainda tem frase na fila? Toca a próxima e não encerra a fala.
+            if (root._audioQueue.length > 0) {
+                const q = root._audioQueue.slice();
+                const next = q.shift();
+                root._audioQueue = q;
+                root._playPart(next);
+                return;
+            }
+            // Fila vazia mas o servidor ainda está sintetizando: espera a
+            // próxima parte em vez de dar a fala por encerrada.
+            if (root._audioMore && !root.laughing) {
+                root.phase = "waiting";
+                return;
+            }
+            // Acabou de rir: solta o que ficou pendente da resposta.
+            if (root.laughing) {
+                root.laughing = false;
+                if (root._afterLaugh.length > 0) {
+                    const rest = root._afterLaugh;
+                    root._afterLaugh = "";
+                    root._say(rest);
+                    return;
+                }
+            }
+            // Terminou a saudação do aceno → passa a ouvir a resposta.
+            if (root._greetPending) {
+                root._startWaveListen();
+                return;
+            }
             // Muleta terminou mas a resposta real ainda não chegou: volta pro
             // estado "pensando", não pra idle.
             if (root._awaitingReply) {
@@ -529,9 +894,28 @@ Item {
     Process {
         id: speaker
         onExited: {
+            if (speaker.running)
+                return;
+            if (root._greetPending) {
+                root._startWaveListen();
+                return;
+            }
             // Se um novo speak() já recomeçou o processo, não derruba a fase.
-            if (root.phase === "speaking" && !speaker.running)
+            if (root.phase === "speaking")
                 root.phase = "idle";
+        }
+    }
+
+    // Grava a resposta da pessoa após a saudação do aceno por ~6s, depois
+    // transcreve e manda pro Jorginho.
+    Timer {
+        id: waveListenTimeout
+        interval: 6000
+        onTriggered: {
+            if (root.phase === "listening" && recorder.running) {
+                root.phase = "transcribing";
+                recorder.running = false;   // onExited dispara a transcrição
+            }
         }
     }
 }

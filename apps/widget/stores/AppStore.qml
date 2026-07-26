@@ -21,6 +21,24 @@ Item {
     // único agente com voz), a resposta final também sai por voz — mesmo
     // quando digitada. Outros agentes respondem só por escrito.
     property bool speakReplies: false
+    // Rastreamento facial por webcam (opt-in, 100% local). Com ele ligado, no
+    // descanso de tela o avatar olha pra quem está na frente da câmera.
+    property bool cameraEnabled: false
+    // Modo fantoche: o avatar espelha suas expressões em tempo real (serve
+    // pra calibrar as emoções). Só tem efeito com a câmera ligada.
+    property bool puppetMode: false
+    // Estado do rastreamento facial (escrito pelo FaceTrackService).
+    property string faceStatus: ""
+    property int faceOwner: -1              // 1 dono, 0 outro, -1 sem/indefinido
+
+    // Emitido quando o usuário pede pra cadastrar o rosto (o FaceTrackService
+    // escuta e manda ENROLL pro tracker).
+    signal enrollFaceRequested()
+    // Alguém acenou pra webcam — o Jorginho cumprimenta e passa a ouvir.
+    signal waveDetected()
+    function enrollFace() {
+        root.enrollFaceRequested();
+    }
     // Menção (@agente) da última pergunta do usuário, normalizada em
     // minúsculas. "" quando foi uma pergunta geral (sem @). Usado pra decidir
     // se a resposta final deve ser falada (só o Jorginho fala).
@@ -100,6 +118,41 @@ Item {
                 root.timeline = r.events.slice(-200);
         });
         _loadUiSettings();
+        _loadUserName();
+        _loadVoiceSettings();
+    }
+
+    // Como o usuário quer ser chamado ("Jhon"). Vem do daemon (setting
+    // "user.name"), que é quem também usa isso nas saudações locais — um só
+    // lugar pra mudar o nome.
+    property string userName: ""
+
+    function _loadUserName() {
+        backend.call("settings.get", { key: "user.name" }, function (r) {
+            if (r && typeof r.value === "string")
+                root.userName = r.value;
+        });
+    }
+
+    // Timbre da voz neural (um dos 58 do XTTS) e ritmo da fala. Trocar o timbre
+    // é o que mais muda a naturalidade percebida — vem de setting pra poder ser
+    // trocado por `scripts/voice-audition.sh` sem editar código.
+    property string voiceSpeaker: ""
+    property real voiceSpeed: 0
+    // O servidor de voz lê isso do ambiente NA PARTIDA, então ele só sobe
+    // depois que a leitura terminar — senão subiria com o timbre de fábrica.
+    property bool voiceSettingsLoaded: false
+
+    function _loadVoiceSettings() {
+        backend.call("settings.get", { key: "voice.speaker" }, function (r) {
+            if (r && typeof r.value === "string")
+                root.voiceSpeaker = r.value;
+            backend.call("settings.get", { key: "voice.speed" }, function (r2) {
+                if (r2 && typeof r2.value === "number")
+                    root.voiceSpeed = r2.value;
+                root.voiceSettingsLoaded = true;
+            });
+        });
     }
 
     function _loadUiSettings() {
@@ -113,6 +166,8 @@ Item {
                 if (v.fullscreen !== undefined) root.fullscreen = v.fullscreen;
                 if (v.hologramCycle !== undefined) root.hologramCycle = v.hologramCycle;
                 if (v.speakReplies !== undefined) root.speakReplies = v.speakReplies;
+                if (v.cameraEnabled !== undefined) root.cameraEnabled = v.cameraEnabled;
+                if (v.puppetMode !== undefined) root.puppetMode = v.puppetMode;
             }
         });
     }
@@ -127,7 +182,9 @@ Item {
                 expanded: root.expanded,
                 fullscreen: root.fullscreen,
                 hologramCycle: root.hologramCycle,
-                speakReplies: root.speakReplies
+                speakReplies: root.speakReplies,
+                cameraEnabled: root.cameraEnabled,
+                puppetMode: root.puppetMode
             }
         }, null);
     }
@@ -312,8 +369,12 @@ Item {
                 root.currentPage = "settings";
                 root.expanded = true;
             }
+            // `speak` = resposta JÁ PRONTA (saudação respondida no daemon, sem
+            // ir a provedor). Vai com detail preenchido, que é o que o serviço
+            // de voz entende como "resposta final" — o ack comum tem detail
+            // vazio justamente pra não ser falado.
             if (r.text && r.text.length > 0)
-                _pushTerminal("reply", r.text, "");
+                _pushTerminal("reply", r.text, r.speak ? r.text : "");
         });
     }
 

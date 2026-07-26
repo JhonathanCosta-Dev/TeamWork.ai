@@ -18,6 +18,16 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+/// Viés léxico do Whisper para o português falado neste app: nome do agente e
+/// jargão que ele mais escutava errado ("Jorginho" saía "jogo linho", "Liquid"
+/// virava "líquido"). O Whisper trata o prompt como continuação de contexto,
+/// então é uma lista de termos, não uma instrução.
+const TRANSCRIBE_HINT_PT: &str = "Conversa com o assistente Jorginho sobre \
+desenvolvimento web e lojas Shopify. Termos comuns: Jorginho, Team Work AI, \
+Shopify, Liquid, tema, seção, snippet, template, schema, metafield, checkout, \
+carrinho, coleção, produto, deploy, commit, branch, Quickshell, QML, Rust, \
+CSS, HTML, JavaScript, terminal, vault, skill.";
+
 pub struct OpenAiCompatProvider {
     id: String,
     name: String,
@@ -366,13 +376,22 @@ impl AiProvider for OpenAiCompatProvider {
                 provider: self.id.clone(),
                 message: e.to_string(),
             })?;
+        // `large-v3` (não o `turbo`): o turbo é mais rápido mas erra mais em
+        // nome próprio e termo técnico — num clipe de comando de voz (segundos)
+        // a diferença de latência é irrelevante e a de precisão, não.
         let mut form = reqwest::multipart::Form::new()
             .part("file", part)
-            .text("model", "whisper-large-v3-turbo")
+            .text("model", "whisper-large-v3")
             .text("response_format", "json")
             .text("temperature", "0");
         if let Some(lang) = language {
             form = form.text("language", lang.to_string());
+            // Dicionário de contexto: o Whisper usa o prompt como viés léxico,
+            // o que conserta justamente o que ele mais errava — o apelido do
+            // agente e o jargão do projeto.
+            if lang.starts_with("pt") {
+                form = form.text("prompt", TRANSCRIBE_HINT_PT.to_string());
+            }
         }
         let resp = self
             .request(reqwest::Method::POST, "/audio/transcriptions")

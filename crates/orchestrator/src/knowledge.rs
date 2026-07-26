@@ -166,3 +166,75 @@ pub fn vault_notes_on_demand(root: &std::path::Path, message: &str) -> Option<St
     }
     Some(out)
 }
+
+/// O pedido justifica carregar o vault (Como Agir + índice) no prompt?
+///
+/// Medido no CLI headless: esse bloco de ~10 KB levou a resposta de 2,8 s para
+/// 5,3 s. Em pergunta rápida, saudação ou papo, ele não muda a resposta — só
+/// atrasa. Então entra quando há sinal de TRABALHO: verbo de execução, termo
+/// técnico, arquivo/caminho, ou um pedido longo (onde contexto compensa).
+pub fn needs_vault(message: &str) -> bool {
+    let m = message.to_lowercase();
+    let words = m.split_whitespace().count();
+
+    const WORK: &[&str] = &[
+        "cria", "criar", "crie", "implementa", "implementar", "refatora", "refatorar",
+        "analisa", "analisar", "revisa", "revisar", "corrig", "ajusta", "ajustar",
+        "otimiza", "otimizar", "migra", "migrar", "documenta", "testa", "testar",
+        "escreve", "escrever", "gera", "gerar", "instala", "configura", "audita",
+        "skill", "vault", "nota", "como agir", "padrão", "padrao", "arquitetura",
+        "código", "codigo", "bug", "erro", "seção", "secao", "section", "snippet",
+        "liquid", "shopify", "tema", "theme", "css", "html", "javascript", "qml",
+        "rust", "python", "commit", "branch", "deploy", "projeto", "componente",
+        "template", "schema", "metafield", "checkout", "carrinho", "produto",
+    ];
+    if WORK.iter().any(|k| m.contains(k)) {
+        return true;
+    }
+    // Caminho ou nome de arquivo ("product-main.liquid", "apps/widget").
+    if m.split_whitespace().any(|w| {
+        (w.contains('.') && w.rsplit('.').next().is_some_and(|e| (2..=5).contains(&e.len())))
+            || w.contains('/')
+    }) {
+        return true;
+    }
+    // Pedido longo: provavelmente trabalho descrito em prosa.
+    words >= 25
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_vault;
+
+    #[test]
+    fn pergunta_rapida_nao_carrega_vault() {
+        for m in [
+            "que horas são",
+            "qual a previsão do tempo hoje",
+            "quanto é dois mais dois",
+            "bom dia",
+            "obrigado",
+            "você está aí",
+            "me conta uma piada",
+        ] {
+            assert!(!needs_vault(m), "não deveria carregar: {m}");
+        }
+    }
+
+    #[test]
+    fn pedido_de_trabalho_carrega_vault() {
+        for m in [
+            "cria uma seção de depoimentos",
+            "revisa o css do tema",
+            "usa a skill transformar-secao nesse código",
+            "analisa o arquivo product-main.liquid",
+            "olha em apps/widget o que está errado",
+            "salva isso no vault",
+            "por favor preciso que você faça um estudo detalhado comparando as duas \
+             abordagens de arquitetura que discutimos ontem e me diga qual é melhor \
+             considerando o prazo apertado que temos agora",
+        ] {
+            assert!(needs_vault(m), "deveria carregar: {m}");
+        }
+    }
+}

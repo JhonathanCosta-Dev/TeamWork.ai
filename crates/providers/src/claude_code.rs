@@ -28,6 +28,8 @@ use std::time::Duration;
 const TASK_TIMEOUT: Duration = Duration::from_secs(900);
 /// Tempo máximo do health check (`claude --version`).
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Acima disso o pedido é "trabalho" e vale streaming (ver `stream`).
+const SHORT_PROMPT_CHARS: usize = 320;
 
 /// Ferramentas pré-aprovadas ("agência sem shell" + abrir apps): arquivos,
 /// skills, web e os DOIS únicos comandos liberados — lançadores de app.
@@ -117,6 +119,31 @@ impl ClaudeCodeProvider {
         (system, prompt)
     }
 
+    /// Roda o CLI em modo texto e devolve a resposta inteira. Usado quando o
+    /// streaming não paga o próprio custo (pergunta curta).
+    async fn run_text(&self, system: &str, prompt: &str) -> Result<String, ProviderError> {
+        let mut cmd = self.command(system, prompt, "text");
+        let out = tokio::time::timeout(TASK_TIMEOUT, cmd.output())
+            .await
+            .map_err(|_| ProviderError::Timeout(TASK_TIMEOUT))?
+            .map_err(|e| self.err(format!("falha ao executar o CLI: {e}")))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            return Err(self.err(format!(
+                "claude saiu com {} — stderr: {} — stdout: {}",
+                out.status,
+                stderr.chars().take(400).collect::<String>(),
+                stdout.chars().take(400).collect::<String>()
+            )));
+        }
+        let content = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if content.is_empty() {
+            return Err(self.err("resposta vazia do CLI"));
+        }
+        Ok(content)
+    }
+
     /// Monta o comando base do CLI — flags de permissão, regras de operação,
     /// continuidade de conversa (`-c`: retoma a última sessão do diretório;
     /// inicia uma nova quando não há) e higiene de ambiente.
@@ -142,6 +169,12 @@ impl ClaudeCodeProvider {
         cmd.env_remove("ANTHROPIC_API_KEY")
             .env_remove("ANTHROPIC_AUTH_TOKEN")
             .env_remove("ANTHROPIC_BASE_URL");
+        // Aqui o CLI é chamado em loop por um daemon, não por uma pessoa num
+        // terminal: checagem de atualização e tráfego não-essencial só somam
+        // latência a cada pergunta. Medido: ~1,5-2 s por chamada com cada um
+        // destes desligado (o custo fixo de subir o processo é o teto real).
+        cmd.env("DISABLE_AUTOUPDATER", "1")
+            .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
         let mut sys = system.to_string();
         sys.push_str(OPERATION_RULES);
         cmd.arg("--append-system-prompt").arg(&sys);
@@ -257,6 +290,19 @@ impl AiProvider for ClaudeCodeProvider {
         let (system, prompt) = Self::build_prompt(&request);
         if prompt.trim().is_empty() {
             return Err(self.err("tarefa vazia"));
+        }
+        // Pergunta curta não precisa de progresso ao vivo — e o `stream-json`
+        // custa ~1,2 s medidos a mais que o `text`. Em pedido longo (onde a
+        // espera é real e ver o andamento importa) o streaming continua.
+        if prompt.chars().count() <= SHORT_PROMPT_CHARS {
+            let text = self.run_text(&system, &prompt).await?;
+            return Ok(Box::pin(futures::stream::once(async move {
+                Ok(StreamChunk {
+                    delta: text,
+                    done: true,
+                    progress: false,
+                })
+            })));
         }
         let mut cmd = self.command(&system, &prompt, "stream-json");
         cmd.arg("--verbose"); // exigido pelo CLI com stream-json em -p
