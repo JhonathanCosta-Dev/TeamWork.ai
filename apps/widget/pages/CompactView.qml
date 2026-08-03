@@ -10,6 +10,7 @@ Rectangle {
     property var store
     signal expandRequested()
     signal terminalRequested()
+    signal copilotRequested()
 
     radius: Theme.radius
     color: Theme.background
@@ -84,6 +85,11 @@ Rectangle {
                 glyph: "❯_"
                 tooltip: "Terminal"
                 onClicked: root.terminalRequested()
+            }
+            IconButton {
+                glyph: "👁"
+                tooltip: "Modo copiloto (só o rosto, sobre a área de trabalho)"
+                onClicked: root.copilotRequested()
             }
             IconButton {
                 glyph: "⤢"

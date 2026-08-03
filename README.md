@@ -95,6 +95,23 @@ No terminal do widget (ou via `twctl terminal "…"`):
 /cancel <task-id>
 ```
 
+## Modos do widget
+
+Compacto (pastilha na borda), expandido (abas + terminal), tela cheia (sala de
+operações) e **copiloto**.
+
+No copiloto fica só o rosto do Jorginho sobreposto à área de trabalho, no
+monitor e borda escolhidos em Config. Ele não reserva espaço na tela e nunca
+pede o foco do teclado — você segue digitando na janela de baixo enquanto ele
+fica ali te olhando (e te seguindo com o olhar, se a câmera estiver ligada).
+Só abre a boca quando você o chama: "fala Jorginho", aceno, palmas ou o botão
+do microfone. A resposta sai em voz e em legenda sob o rosto, **sem** inflar
+pra tela cheia como nos outros modos.
+
+Liga pelo botão 👁 (compacto ou expandido), pelo interruptor em Config, ou por
+IPC: `qs ipc call teamwork copilot`. Passe o mouse em cima pra ver os controles
+(microfone, ativação por voz, voltar ao widget, fechar).
+
 ## Configuração das APIs (opcional)
 
 ```bash

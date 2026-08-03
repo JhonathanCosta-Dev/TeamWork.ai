@@ -23,6 +23,7 @@ Config por ambiente:
   TEAMWORK_XTTS_DEVICE      cuda | cpu (padrão: cuda se disponível)
   TEAMWORK_XTTS_OUT         pasta dos wavs de saída
   TEAMWORK_LAUGH_DIR        pasta com risadas em .wav (substituem as sintetizadas)
+  TEAMWORK_USER_NAME        como chamar a pessoa nas saudações (padrão: chefe)
 """
 import hashlib
 import os
@@ -59,6 +60,52 @@ CACHE_DIR = os.environ.get(
         "teamwork-ai", "voice-cache",
     ),
 )
+
+
+# Saudações por período, com NOME DE ARQUIVO ESTÁVEL: o widget toca direto do
+# disco ao abrir (uns milissegundos), sem esperar os ~11 s de carga do modelo.
+# É o que faz a palma com o app fechado virar "abriu e cumprimentou na hora".
+USER_NAME = os.environ.get("TEAMWORK_USER_NAME", "").strip() or "chefe"
+GREETS = (
+    ("morning", "Bom dia"),
+    ("afternoon", "Boa tarde"),
+    ("night", "Boa noite"),
+)
+
+
+def greet_text(period_label):
+    return "%s, %s! Me chamou?" % (period_label, USER_NAME)
+
+
+def greet_file(period):
+    return os.path.join(CACHE_DIR, "greet-%s.wav" % period)
+
+
+def invalidate_greets_if_voice_changed(voice_key):
+    """As saudações têm nome fixo, então precisam ser invalidadas na mão quando
+    a voz (ou o nome da pessoa) muda — senão ficariam com a voz antiga."""
+    marker = os.path.join(CACHE_DIR, "greet.key")
+    # O texto entra na chave: os arquivos têm nome FIXO, então mudar a frase sem
+    # isso deixaria o áudio antigo tocando pra sempre.
+    texts = "".join(greet_text(label) for _, label in GREETS)
+    key = "%s|%s|%s" % (voice_key, USER_NAME,
+                        hashlib.sha1(texts.encode("utf-8")).hexdigest()[:8])
+    try:
+        with open(marker, "r", encoding="utf-8") as fh:
+            if fh.read().strip() == key:
+                return
+    except OSError:
+        pass
+    for period, _ in GREETS:
+        try:
+            os.remove(greet_file(period))
+        except OSError:
+            pass
+    try:
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write(key)
+    except OSError:
+        pass
 
 
 def cache_path(kind, index, text, voice_key):
@@ -290,7 +337,15 @@ def main():
     voice_key = "%s|%s|%s" % (kwargs.get("speaker", "ref"),
                               kwargs.get("speaker_wav", ""), SPEED)
     os.makedirs(CACHE_DIR, exist_ok=True)
+    invalidate_greets_if_voice_changed(voice_key)
     todo = []
+    # Saudações primeiro na fila: são elas que a palma com o app fechado usa.
+    for period, label in GREETS:
+        fp = greet_file(period)
+        if os.path.exists(fp):
+            out("GREET %s %s" % (period, fp))
+        else:
+            todo.append(("greet", period, greet_text(label), fp))
     for kind, phrases in (("filler", FILLERS), ("laugh", LAUGHS)):
         if kind == "laugh":
             mine = user_laughs()
@@ -302,7 +357,7 @@ def main():
         for i, phrase in enumerate(phrases):
             fp = cache_path(kind, i, phrase, voice_key)
             if os.path.exists(fp):
-                out("%s %d %s" % (kind.upper(), i, fp))     # já pronto do cache
+                out("%s %s %s" % (kind.upper(), i, fp))     # já pronto do cache
             else:
                 todo.append((kind, i, phrase, fp))
     if todo:
@@ -341,7 +396,7 @@ def main():
             kind, i, phrase, fp = todo.pop(0)
             try:
                 synth_to_file(tts, phrase, fp, kwargs)
-                out("%s %d %s" % (kind.upper(), i, fp))
+                out("%s %s %s" % (kind.upper(), i, fp))
             except Exception as e:  # noqa: BLE001
                 err("falha no clipe %s %d: %s" % (kind, i, e))
             continue

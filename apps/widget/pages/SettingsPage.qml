@@ -163,6 +163,50 @@ Column {
         }
     }
 
+    // Modo copiloto.
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: 10
+            color: root.store.copilot ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: 8
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.copilot ? parent.width - width - 2 : 2
+                Behavior on x {
+                    NumberAnimation { duration: Theme.animFast }
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.store.setCopilot(!root.store.copilot)
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Modo copiloto (só o rosto, sobre a área de trabalho)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "No copiloto o Jorginho fica pequeno na borda e tela escolhidas acima, sem terminal e sem roubar o foco do teclado — só te olhando. Ele responde quando você chama (\"fala Jorginho\", aceno, palmas ou o botão do microfone), e a resposta aparece em legenda embaixo do rosto sem abrir a tela cheia. Passe o mouse em cima pra ver os controles."
+        wrapMode: Text.WordWrap
+        color: Theme.textDisabled
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+    }
+
     // Ciclo de desmontar/remontar do holograma (tela cheia).
     Row {
         spacing: 8

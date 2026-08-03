@@ -47,6 +47,11 @@ Item {
         Quickshell.env("HOME") + "/.local/share/teamwork-ai/wake"
     readonly property string _wakeScript:
         Qt.resolvedUrl("wake_listener.py").toString().replace(/^file:\/\//, "")
+    readonly property string _greetCache:
+        (Quickshell.env("XDG_DATA_HOME") && Quickshell.env("XDG_DATA_HOME").length > 0
+            ? Quickshell.env("XDG_DATA_HOME")
+            : Quickshell.env("HOME") + "/.local/share")
+        + "/teamwork-ai/voice-cache"
     readonly property string _chimePath:
         Qt.resolvedUrl("../assets/wake-chime.wav").toString().replace(/^file:\/\//, "")
 
@@ -111,6 +116,16 @@ Item {
         "(?:k{3,}|\\b(?:ha\\s*){2,}h?\\b|\\b(?:rá\\s*){2,}\\b"
         + "|\\b(?:hehe|hihi|huehue)\\w*|\\b(?:rs){2,}\\b"
         + "|\\blol\\b|\\brisos\\b|😂|🤣|😆|😹)"
+
+    // Ele foi chamado: aparece pra pessoa ver que está ouvindo. NO MODO
+    // COPILOTO não abre nada — o rosto já está visível sobre a área de
+    // trabalho, e inflar pra tela cheia é justamente o que o copiloto evita.
+    function _surface() {
+        if (root.store.copilot)
+            return;
+        if (!root.store.fullscreen)
+            root.store.fullscreen = true;
+    }
 
     function statusLabel() {
         switch (root.phase) {
@@ -231,8 +246,7 @@ Item {
             chime.running = true;
             // Chamou pelo nome fora da tela cheia? Abre ela — o holograma
             // aparece ouvindo, como um assistente de verdade.
-            if (!root.store.fullscreen)
-                root.store.fullscreen = true;
+            root._surface();
         } else if (line === "CLAP") {
             // Ignição 5: duas palmas. Bipe imediato (a síntese da saudação leva
             // 1-3 s; sem o bipe a palma parece não ter sido ouvida) e depois ele
@@ -246,6 +260,34 @@ Item {
         } else if (line === "TIMEOUT") {
             root._wakeActive = false;
             root.phase = "idle";
+        }
+    }
+
+    // Toca a saudação de abertura (clipe pronto). Player separado de propósito:
+    // se o arquivo não existir, o código de saída != 0 é o sinal pra sintetizar.
+    Process {
+        id: greetPlayer
+        onExited: (code, status) => {
+            if (code === 0) {
+                root._startWaveListen();      // cumprimentou → escuta a resposta
+            } else {
+                root._greetPending = false;
+                root.greetAndListen(root._timeGreeting());
+            }
+        }
+    }
+
+    // Abriu por palma com o app fechado: o primeiro painel ativo cumprimenta e
+    // consome a marca (com vários monitores, só um fala).
+    Timer {
+        id: startupGreetTimer
+        interval: 900                 // deixa as settings (nome) carregarem
+        running: root.active && root.store.startupGreet
+        onTriggered: {
+            if (!root.store.startupGreet)
+                return;
+            root.store.startupGreet = false;
+            root.greetOnStartup();
         }
     }
 
@@ -272,13 +314,43 @@ Item {
                 || root.phase === "waiting" || root._awaitingReply || root._greetPending)
             return;
         // Aparece na tela cheia pra pessoa ver o Jorginho respondendo.
-        if (!root.store.fullscreen)
-            root.store.fullscreen = true;
+        root._surface();
         root._engaged = true;          // ignição 3 (aceno) / 5 (palmas)
         root._greetPending = true;
         root._greet((phrase && phrase.length > 0)
                     ? phrase
                     : "Olá! Tudo bem com você?");
+    }
+
+    // Saudação pelo horário, nos mesmos limites do daemon (5-11 / 12-17 / resto).
+    function _period() {
+        const h = new Date().getHours();
+        if (h >= 5 && h < 12)
+            return "morning";
+        return (h >= 12 && h < 18) ? "afternoon" : "night";
+    }
+
+    function _periodLabel(p) {
+        return p === "morning" ? "Bom dia" : (p === "afternoon" ? "Boa tarde" : "Boa noite");
+    }
+
+    function _timeGreeting() {
+        return root._periodLabel(root._period()) + ", " + root._who() + "! Em que posso ajudar?";
+    }
+
+    // Abriu por palma: cumprimenta JÁ. Toca o clipe pronto do cache (nome de
+    // arquivo estável, uns milissegundos) em vez de esperar o modelo XTTS
+    // carregar (~11 s) — se o clipe não existir ainda, o player falha e cai na
+    // síntese normal.
+    function greetOnStartup() {
+        root._engaged = true;
+        root._surface();
+        root._greetPending = true;
+        root.speakMood = "happy";
+        root.phase = "speaking";
+        greetPlayer.command = ["pw-play", root._greetCache + "/greet-"
+                               + root._period() + ".wav"];
+        greetPlayer.running = true;
     }
 
     // Como chamar a pessoa. Sem nome configurado, um tratamento neutro — melhor
@@ -830,6 +902,9 @@ Item {
                 env["TEAMWORK_XTTS_SPEAKER"] = spk;
             if (root.store.voiceSpeed > 0)
                 env["TEAMWORK_XTTS_SPEED"] = String(root.store.voiceSpeed);
+            const who = (root.store.userName ?? "").trim();
+            if (who.length > 0)
+                env["TEAMWORK_USER_NAME"] = who;
             return env;
         }
         command: ["setsid", "bash", "-c",

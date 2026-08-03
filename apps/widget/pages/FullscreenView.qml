@@ -21,6 +21,7 @@ Rectangle {
     required property var faceTrack
     signal exitFullscreen()
     signal collapseAll()
+    signal copilotRequested()
 
     // Descanso de tela: só o rosto do Jorginho, gigante e vivo.
     property bool screensaver: false
@@ -150,6 +151,11 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 6
 
+                IconButton {
+                    glyph: "👁"
+                    tooltip: "Modo copiloto (só o rosto, sobre a área de trabalho)"
+                    onClicked: root.copilotRequested()
+                }
                 IconButton {
                     glyph: "⤓"
                     tooltip: "Sair da tela cheia"

@@ -11,6 +11,7 @@ Rectangle {
     property var screens: []
     signal collapseRequested()
     signal fullscreenRequested()
+    signal copilotRequested()
 
     radius: Theme.radius
     color: Theme.background
@@ -60,6 +61,11 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 8
 
+                IconButton {
+                    glyph: "👁"
+                    tooltip: "Modo copiloto (só o rosto, sobre a área de trabalho)"
+                    onClicked: root.copilotRequested()
+                }
                 IconButton {
                     glyph: "⛶"
                     tooltip: "Tela cheia"

@@ -44,6 +44,11 @@ ShellRoot {
                 required property var modelData
                 screen: modelData
 
+                // Copiloto vence expandido/tela cheia: um estado salvo antigo
+                // (ou um IPC solto) não pode inflar o overlay pra tela toda.
+                readonly property bool fs: appStore.fullscreen && !appStore.copilot
+                readonly property bool exp: appStore.expanded && !appStore.copilot
+
                 // Seleção de monitor: "" = apenas o primeiro da lista.
                 visible: (appStore.monitorName === "" || !root.savedMonitorConnected)
                          ? modelData === Quickshell.screens[0]
@@ -52,29 +57,38 @@ ShellRoot {
                 color: "transparent"
 
                 anchors {
-                    top: appStore.fullscreen || appStore.edge !== "bottom"
-                    bottom: appStore.fullscreen || appStore.edge === "bottom"
-                    right: appStore.fullscreen || appStore.edge !== "left"
-                    left: appStore.fullscreen || appStore.edge === "left"
+                    top: panel.fs || appStore.edge !== "bottom"
+                    bottom: panel.fs || appStore.edge === "bottom"
+                    right: panel.fs || appStore.edge !== "left"
+                    left: panel.fs || appStore.edge === "left"
                 }
 
                 margins {
-                    top: appStore.fullscreen ? 0
+                    top: panel.fs ? 0
                          : (appStore.edge === "left" || appStore.edge === "right" ? 48 : 8)
-                    right: appStore.fullscreen ? 0 : 8
-                    left: appStore.fullscreen ? 0 : 8
-                    bottom: appStore.fullscreen ? 0 : 8
+                    right: panel.fs ? 0 : 8
+                    left: panel.fs ? 0 : 8
+                    bottom: panel.fs ? 0 : 8
                 }
 
-                implicitWidth: appStore.expanded ? 436 : 112
-                implicitHeight: appStore.expanded ? 576 : compact.implicitHeight + 16
+                // 240x300 no copiloto: o raio útil do rosto (min(L,A)*0.36) fica
+                // igual ao do holograma da barra lateral, que é o tamanho pra
+                // que a malha de pontos foi calibrada. Menor que isso e a
+                // silhueta rala.
+                implicitWidth: appStore.copilot ? 240 : (panel.exp ? 436 : 112)
+                implicitHeight: appStore.copilot ? 300
+                                : (panel.exp ? 576 : compact.implicitHeight + 16)
 
-                // Não reserva espaço por padrão.
-                exclusiveZone: appStore.reserveSpace && !appStore.fullscreen ? implicitWidth : 0
+                // Não reserva espaço por padrão. No copiloto NUNCA reserva —
+                // ele é um overlay sobre a área de trabalho, não uma barra.
+                exclusiveZone: appStore.reserveSpace && !panel.fs
+                               && !appStore.copilot ? implicitWidth : 0
 
-                // Foco de teclado sob demanda; não rouba foco.
+                // Foco de teclado sob demanda; não rouba foco. O copiloto nunca
+                // pede foco: ele fica sobre a área de trabalho enquanto você
+                // digita em outra janela.
                 WlrLayershell.layer: WlrLayer.Top
-                WlrLayershell.keyboardFocus: appStore.expanded || appStore.fullscreen
+                WlrLayershell.keyboardFocus: panel.exp || panel.fs
                     ? WlrKeyboardFocus.OnDemand
                     : WlrKeyboardFocus.None
 
@@ -87,7 +101,7 @@ ShellRoot {
 
                 Item {
                     anchors.fill: parent
-                    anchors.margins: appStore.fullscreen ? 0 : 8
+                    anchors.margins: panel.fs ? 0 : 8
                     focus: true
 
                     Keys.onEscapePressed: {
@@ -105,7 +119,7 @@ ShellRoot {
                         anchors.right: parent.right
                         anchors.top: parent.top
                         width: 96
-                        visible: !appStore.expanded && !appStore.fullscreen
+                        visible: !panel.exp && !panel.fs && !appStore.copilot
                         store: appStore
                         onExpandRequested: {
                             appStore.expanded = true;
@@ -116,12 +130,13 @@ ShellRoot {
                             appStore.saveUiSettings();
                             expandedView.focusTerminal();
                         }
+                        onCopilotRequested: appStore.setCopilot(true)
                     }
 
                     ExpandedView {
                         id: expandedView
                         anchors.fill: parent
-                        visible: appStore.expanded && !appStore.fullscreen
+                        visible: panel.exp && !panel.fs
                         store: appStore
                         screens: Quickshell.screens
                         onCollapseRequested: {
@@ -133,6 +148,7 @@ ShellRoot {
                             appStore.saveUiSettings();
                             fullscreenView.focusTerminal();
                         }
+                        onCopilotRequested: appStore.setCopilot(true)
                     }
 
                     // UM serviço de voz por painel, ativo SÓ no painel
@@ -153,10 +169,24 @@ ShellRoot {
                         active: panel.visible
                     }
 
+                    CopilotView {
+                        id: copilotView
+                        anchors.fill: parent
+                        visible: appStore.copilot
+                        store: appStore
+                        voice: voiceSvc
+                        faceTrack: faceSvc
+                        onExpandRequested: {
+                            appStore.setCopilot(false);
+                            appStore.expanded = true;
+                            appStore.saveUiSettings();
+                        }
+                    }
+
                     FullscreenView {
                         id: fullscreenView
                         anchors.fill: parent
-                        visible: appStore.fullscreen
+                        visible: panel.fs
                         store: appStore
                         voice: voiceSvc
                         faceTrack: faceSvc
@@ -171,6 +201,7 @@ ShellRoot {
                             appStore.expanded = false;
                             appStore.saveUiSettings();
                         }
+                        onCopilotRequested: appStore.setCopilot(true)
                     }
                 }
             }
@@ -182,26 +213,34 @@ ShellRoot {
         target: "teamwork"
 
         function toggle(): void {
+            appStore.copilot = false;
             appStore.expanded = !appStore.expanded;
             appStore.saveUiSettings();
         }
 
         function expand(): void {
+            appStore.copilot = false;
             appStore.expanded = true;
             appStore.saveUiSettings();
         }
 
         function collapse(): void {
+            appStore.copilot = false;
             appStore.expanded = false;
             appStore.fullscreen = false;
             appStore.saveUiSettings();
         }
 
         function fullscreen(): void {
+            appStore.copilot = false;
             appStore.fullscreen = !appStore.fullscreen;
             if (appStore.fullscreen)
                 appStore.expanded = true;
             appStore.saveUiSettings();
+        }
+
+        function copilot(): void {
+            appStore.setCopilot(!appStore.copilot);
         }
     }
 }

@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell   // Quickshell.env — usado pela marca de saudação na abertura
 
 // Estado da aplicação no widget. Recebe eventos do BackendClient e expõe
 // dados prontos para renderização. Estado durável fica no daemon (SQLite);
@@ -11,6 +12,11 @@ Item {
     // Estado de UI persistido no daemon (settings.*)
     property bool expanded: false
     property bool fullscreen: false
+    // Modo copiloto: só o rosto do Jorginho sobreposto à área de trabalho, na
+    // tela e borda escolhidas. Sem terminal, sem abas, sem roubar foco — ele
+    // fica olhando e só responde quando você fala com ele. Exclusivo com
+    // expandido/tela cheia (ver setCopilot).
+    property bool copilot: false
     property string edge: "right"          // right | left | top | bottom
     property string monitorName: ""         // "" = todos/primeiro
     property bool reserveSpace: false
@@ -122,6 +128,11 @@ Item {
         _loadVoiceSettings();
     }
 
+    // Aberto por PALMA com o app fechado (o serviço de palmas exporta
+    // TEAMWORK_AI_GREET=1 ao lançar): o primeiro painel visível cumprimenta e
+    // consome a marca, pra não cumprimentar uma vez por monitor.
+    property bool startupGreet: Quickshell.env("TEAMWORK_AI_GREET") === "1"
+
     // Como o usuário quer ser chamado ("Jhon"). Vem do daemon (setting
     // "user.name"), que é quem também usa isso nas saudações locais — um só
     // lugar pra mudar o nome.
@@ -164,6 +175,7 @@ Item {
                 if (v.reserveSpace !== undefined) root.reserveSpace = v.reserveSpace;
                 if (v.expanded !== undefined) root.expanded = v.expanded;
                 if (v.fullscreen !== undefined) root.fullscreen = v.fullscreen;
+                if (v.copilot !== undefined) root.copilot = v.copilot;
                 if (v.hologramCycle !== undefined) root.hologramCycle = v.hologramCycle;
                 if (v.speakReplies !== undefined) root.speakReplies = v.speakReplies;
                 if (v.cameraEnabled !== undefined) root.cameraEnabled = v.cameraEnabled;
@@ -181,12 +193,24 @@ Item {
                 reserveSpace: root.reserveSpace,
                 expanded: root.expanded,
                 fullscreen: root.fullscreen,
+                copilot: root.copilot,
                 hologramCycle: root.hologramCycle,
                 speakReplies: root.speakReplies,
                 cameraEnabled: root.cameraEnabled,
                 puppetMode: root.puppetMode
             }
         }, null);
+    }
+
+    // Entra/sai do modo copiloto. Único ponto que alterna o modo, pra que
+    // expandido/tela cheia nunca fiquem ligados junto com ele.
+    function setCopilot(on) {
+        root.copilot = on;
+        if (on) {
+            root.expanded = false;
+            root.fullscreen = false;
+        }
+        root.saveUiSettings();
     }
 
     function _recountActive() {

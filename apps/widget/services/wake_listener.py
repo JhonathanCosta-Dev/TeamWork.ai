@@ -41,7 +41,15 @@ import time
 import wave
 from array import array
 
-from vosk import KaldiRecognizer, Model, SetLogLevel
+
+def _vosk():
+    """Importa o vosk só quando a fala entra em jogo.
+
+    O modo `--claps-only` (serviço que abre o app na palma) é energia pura:
+    sem isso ele carregaria 50 MB de modelo acústico pra nada.
+    """
+    from vosk import KaldiRecognizer, Model, SetLogLevel
+    return KaldiRecognizer, Model, SetLogLevel
 
 SAMPLE_RATE = 16000
 FRAME_SAMPLES = 1024                     # 64 ms — granularidade do VAD
@@ -93,14 +101,24 @@ SUB_SAMPLES = 128                        # 8 ms
 SUB_SECS = SUB_SAMPLES / SAMPLE_RATE
 # Nível: RMS da sub-janela e pico da amostra. Ajustáveis por ambiente —
 # TEAMWORK_CLAP_RMS / TEAMWORK_CLAP_PEAK — pra calibrar sem editar código.
-CLAP_RMS_MIN = float(os.environ.get("TEAMWORK_CLAP_RMS", "1100"))
-CLAP_PEAK_MIN = float(os.environ.get("TEAMWORK_CLAP_PEAK", "4200"))
-CLAP_FLOOR_FACTOR = 6.0     # e destacada do ruído ambiente do momento
+# Calibrado no mic REAL em uso (webcam REDRAGON): piso de ruído rms ~230 /
+# pico ~750 em silêncio — bem mais surdo que o mic interno (piso ~90). Limiar
+# antigo (pico 4200, rms 1100, 8x o piso) exigia praticamente um estouro no
+# microfone e recusava palma de verdade.
+CLAP_RMS_MIN = float(os.environ.get("TEAMWORK_CLAP_RMS", "600"))
+CLAP_PEAK_MIN = float(os.environ.get("TEAMWORK_CLAP_PEAK", "2000"))
+CLAP_FLOOR_FACTOR = 3.0     # e destacada do ruído ambiente do momento
 # ISOLAMENTO — a prova que separa palma de fala: palma NASCE do silêncio e
 # MORRE rápido. Fala mantém a vizinhança alta (ou sobe sem morrer, ou morre
 # sem ter subido), e não passa nas duas provas ao mesmo tempo.
-CLAP_ATTACK_MIN = 5.0       # rms / max(rms das sub-janelas 16-48 ms ANTES)
-CLAP_DECAY_MAX = 0.35       # max(rms 24-56 ms DEPOIS) / rms
+# Ataque e queda afrouxados pra tolerar SALA: parede reflete e a palma ganha
+# cauda, então medir a queda logo depois do estouro (24 ms) rejeitava palma boa
+# em ambiente reverberante. A janela de queda foi empurrada pra 40-80 ms, onde
+# até com reverb o som já caiu. Fala continua reprovada: ela falha no ataque
+# (vizinhança já alta) ou na queda (continua alta muito depois) — medido, nunca
+# nas duas ao mesmo tempo.
+CLAP_ATTACK_MIN = 3.5       # rms / max(rms das sub-janelas 16-48 ms ANTES)
+CLAP_DECAY_MAX = 0.50       # max(rms 40-80 ms DEPOIS) / rms
 CLAP_GAP_MIN = 0.12         # menos que isso é eco da mesma palma
 CLAP_GAP_MAX = 0.90         # mais que isso são duas palmas sem relação
 
@@ -209,6 +227,7 @@ def build_grammar(model) -> str:
     com a frase mutilada; o probe existe pra pegar o caso em que ele lança —
     aí a frase inteira é descartada em vez de derrubar a vigília no boot.
     """
+    KaldiRecognizer, _, _ = _vosk()
     ok = []
     for phrase in WAKE_CANDIDATES:
         try:
@@ -264,7 +283,7 @@ class ClapDetector:
 
     # Vizinhança avaliada, em sub-janelas (8 ms cada).
     PRE_FROM, PRE_TO = 6, 2        # 48 ms .. 16 ms antes
-    POST_FROM, POST_TO = 3, 7      # 24 ms .. 56 ms depois
+    POST_FROM, POST_TO = 5, 10     # 40 ms .. 80 ms depois
 
     def __init__(self):
         self._env = []             # (rms, pico) por sub-janela
@@ -393,6 +412,7 @@ def capture_command(stdin, vad: Vad, preroll) -> bool:
 
 def doctor(model_dir: str) -> None:
     """Mostra ao vivo o que o vosk ouve e se acordaria — pra calibrar."""
+    KaldiRecognizer, Model, SetLogLevel = _vosk()
     SetLogLevel(-1)
     model = Model(model_dir)
     grammar = build_grammar(model)
@@ -505,8 +525,45 @@ def clap_doctor() -> None:
             t0 += SUB_SECS
 
 
+def claps_only() -> None:
+    """Só palmas: imprime CLAP e nada mais.
+
+    É o modo do serviço que fica de pé com o app FECHADO — detecção de palma é
+    análise de energia, então aqui não entra vosk, modelo nem GPU (uns poucos
+    MB de RAM).
+    """
+    stdin = sys.stdin.buffer
+    vad = Vad()
+    claps = ClapDetector()
+    clock = 0.0
+    # Diagnóstico permanente: TODO impulso audível vira uma linha no journal
+    # (`journalctl --user -u teamwork-ai-clap -f`), aceito ou recusado, com os
+    # números. Calibrar limiar de palma sem ver o mic real é chute.
+    verbose = os.environ.get("TEAMWORK_CLAP_DEBUG", "1") != "0"
+    while True:
+        chunk = stdin.read(FRAME_BYTES)
+        if not chunk:
+            return
+        if os.getppid() == 1:
+            return
+        clock += FRAME_SECS
+        level = rms(chunk)
+        floor = vad.floor
+        vad.feed(level)
+        if verbose:
+            top = peak([chunk])
+            if top >= CLAP_PEAK_MIN * 0.35 or level >= CLAP_RMS_MIN * 0.35:
+                err("impulso t=%.1f pico=%d rms=%.0f piso=%.0f" % (clock, top, level, floor))
+        if claps.feed(chunk, level, floor, clock):
+            say("CLAP")
+            err("PALMA DUPLA reconhecida (t=%.1f)" % clock)
+
+
 def main() -> None:
     args = list(sys.argv[1:])
+    if "--claps-only" in args:
+        claps_only()
+        return
     if "--claps" in args:
         clap_doctor()
         return
@@ -515,6 +572,7 @@ def main() -> None:
         doctor(args[0])
         return
 
+    KaldiRecognizer, Model, SetLogLevel = _vosk()
     SetLogLevel(-1)
     model = Model(args[0])
     grammar = build_grammar(model)

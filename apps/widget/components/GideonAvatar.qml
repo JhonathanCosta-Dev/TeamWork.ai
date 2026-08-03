@@ -28,6 +28,13 @@ Item {
     property string mood: "neutral"
     // Modo "descanso de tela": olhar vaga mais amplo.
     property bool idleShow: false
+    // Instância que fica na tela o dia inteiro (modo copiloto): menos quadros
+    // por segundo quando ocioso. Um overlay permanente não pode custar o mesmo
+    // que o holograma de tela cheia, que é efêmero.
+    // A economia é em QUADROS, não em pontos: no repouso o rosto quase não se
+    // move (piscar e olhar são lentos), então cair pra ~14 fps não se percebe —
+    // já ralear a malha desmancha a silhueta e vira ruído em vez de rosto.
+    property bool lowPower: false
     // Aceito por compatibilidade com chamadas antigas; sem efeito na v3.
     property bool cycleAssemble: true
 
@@ -302,7 +309,8 @@ Item {
     // ~22fps ocioso — segura a CPU com a malha densa (9000 pontos) sem perder
     // fluidez quando importa.
     Timer {
-        interval: (root.speaking || root.listening || root.laughing) ? 33 : 45
+        interval: (root.speaking || root.listening || root.laughing)
+                  ? 33 : (root.lowPower ? 70 : 45)
         running: root.visible && root._ready
         repeat: true
         onTriggered: {
