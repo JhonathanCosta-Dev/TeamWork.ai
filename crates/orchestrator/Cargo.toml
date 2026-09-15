@@ -22,3 +22,5 @@ reqwest = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
+# Provedor espião dos testes (captura o prompt que a equipe recebe).
+async-trait = { workspace = true }

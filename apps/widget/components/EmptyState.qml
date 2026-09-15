@@ -7,9 +7,19 @@ Column {
 
     property string title: "Nada por aqui"
     property string subtitle: ""
+    property string glyph: ""
 
-    spacing: 4
-    padding: Theme.padding
+    spacing: 6
+    padding: Theme.padding + 4
+
+    Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.glyph.length > 0
+        text: root.glyph
+        color: Theme.textDisabled
+        font.pixelSize: Theme.fontSizeTitle
+        opacity: 0.7
+    }
 
     Text {
         anchors.horizontalCenter: parent.horizontalCenter
@@ -29,6 +39,6 @@ Column {
         font.pixelSize: Theme.fontSizeSmall
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
-        width: Math.min(implicitWidth, 260)
+        width: Math.min(implicitWidth, 280)
     }
 }

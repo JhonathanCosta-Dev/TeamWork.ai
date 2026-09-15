@@ -36,7 +36,7 @@ Column {
                 required property var modelData
                 width: edgeText.implicitWidth + 16
                 height: 24
-                radius: 12
+                radius: Theme.radiusPill
                 color: root.store.edge === edgeChip.modelData
                        ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                 border.width: 1
@@ -73,7 +73,7 @@ Column {
         Rectangle {
             width: anyText.implicitWidth + 16
             height: 24
-            radius: 12
+            radius: Theme.radiusPill
             color: root.store.monitorName === "" ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
             border.width: 1
             border.color: root.store.monitorName === "" ? Theme.accent : Theme.border
@@ -100,7 +100,7 @@ Column {
                 required property var modelData
                 width: monText.implicitWidth + 16
                 height: 24
-                radius: 12
+                radius: Theme.radiusPill
                 color: root.store.monitorName === monChip.modelData.name
                        ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                 border.width: 1
@@ -131,14 +131,14 @@ Column {
         Rectangle {
             width: 36
             height: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: root.store.reserveSpace ? Theme.accent : Theme.surfaceAlt
             border.width: 1
             border.color: Theme.border
             Rectangle {
                 width: 16
                 height: 16
-                radius: 8
+                radius: Theme.radiusPill
                 color: "#fff"
                 anchors.verticalCenter: parent.verticalCenter
                 x: root.store.reserveSpace ? parent.width - width - 2 : 2
@@ -169,14 +169,14 @@ Column {
         Rectangle {
             width: 36
             height: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: root.store.copilot ? Theme.accent : Theme.surfaceAlt
             border.width: 1
             border.color: Theme.border
             Rectangle {
                 width: 16
                 height: 16
-                radius: 8
+                radius: Theme.radiusPill
                 color: "#fff"
                 anchors.verticalCenter: parent.verticalCenter
                 x: root.store.copilot ? parent.width - width - 2 : 2
@@ -213,14 +213,14 @@ Column {
         Rectangle {
             width: 36
             height: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: root.store.hologramCycle ? Theme.accent : Theme.surfaceAlt
             border.width: 1
             border.color: Theme.border
             Rectangle {
                 width: 16
                 height: 16
-                radius: 8
+                radius: Theme.radiusPill
                 color: "#fff"
                 anchors.verticalCenter: parent.verticalCenter
                 x: root.store.hologramCycle ? parent.width - width - 2 : 2
@@ -268,14 +268,14 @@ Column {
         Rectangle {
             width: 36
             height: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: root.store.speakReplies ? Theme.accent : Theme.surfaceAlt
             border.width: 1
             border.color: Theme.border
             Rectangle {
                 width: 16
                 height: 16
-                radius: 8
+                radius: Theme.radiusPill
                 color: "#fff"
                 anchors.verticalCenter: parent.verticalCenter
                 x: root.store.speakReplies ? parent.width - width - 2 : 2
@@ -333,7 +333,7 @@ Column {
             visible: root.store.cameraEnabled
             width: recRow.implicitWidth + 12
             height: 18
-            radius: 9
+            radius: Theme.radiusPill
             color: Qt.alpha(Theme.danger, 0.2)
             border.width: 1
             border.color: Theme.danger
@@ -349,7 +349,7 @@ Column {
                 Text {
                     text: "câmera ligada"
                     color: Theme.danger
-                    font.pixelSize: Theme.fontSizeSmall - 1
+                    font.pixelSize: Theme.fontSizeTiny
                     font.family: Theme.fontFamily
                 }
             }
@@ -371,14 +371,14 @@ Column {
         Rectangle {
             width: 36
             height: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: root.store.cameraEnabled ? Theme.accent : Theme.surfaceAlt
             border.width: 1
             border.color: Theme.border
             Rectangle {
                 width: 16
                 height: 16
-                radius: 8
+                radius: Theme.radiusPill
                 color: "#fff"
                 anchors.verticalCenter: parent.verticalCenter
                 x: root.store.cameraEnabled ? parent.width - width - 2 : 2
@@ -410,14 +410,14 @@ Column {
         Rectangle {
             width: 36
             height: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: root.store.puppetMode ? Theme.accent : Theme.surfaceAlt
             border.width: 1
             border.color: Theme.border
             Rectangle {
                 width: 16
                 height: 16
-                radius: 8
+                radius: Theme.radiusPill
                 color: "#fff"
                 anchors.verticalCenter: parent.verticalCenter
                 x: root.store.puppetMode ? parent.width - width - 2 : 2
@@ -519,7 +519,7 @@ Column {
                 required property var modelData
                 width: keyProvText.implicitWidth + 16
                 height: 24
-                radius: 12
+                radius: Theme.radiusPill
                 color: root.keyProvider === keyProvChip.modelData
                        ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                 border.width: 1

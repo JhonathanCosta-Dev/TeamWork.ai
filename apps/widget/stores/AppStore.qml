@@ -20,7 +20,8 @@ Item {
     property string edge: "right"          // right | left | top | bottom
     property string monitorName: ""         // "" = todos/primeiro
     property bool reserveSpace: false
-    property string currentPage: "agents"   // agents | tasks | settings
+    // Aba do modo expandido. O chat é a inicial: é o que se usa o tempo todo.
+    property string currentPage: "chat"     // chat | agents | tasks | settings
     // Holograma da tela cheia: desmontar/remontar as partículas em ciclo.
     property bool hologramCycle: true
     // Acessibilidade da IA: quando a pergunta foi dirigida ao Jorginho (o
@@ -68,6 +69,21 @@ Item {
     // mensagens "agent" são sempre conversa interna entre agentes, nunca a
     // resposta final por si só.
     property var terminalLines: []
+    // ------------------------------------------------------------------
+    // Chat
+    // ------------------------------------------------------------------
+    // O fio de conversa que o usuário vê: { role, text, agent, at }, com role
+    // em "user" | "assistant" | "error" | "notice". Vem do daemon ao abrir
+    // (conversation.recent) e cresce com os eventos — é a mesma conversa que
+    // o backend manda ao modelo, então o que está na tela é o que a equipe
+    // lembra. `terminalLines` continua existindo para os bastidores e para o
+    // serviço de voz; são coisas diferentes de propósito.
+    property var chatMessages: []
+    // A equipe está processando a mensagem atual? Enquanto isso o chat mostra
+    // a bolha "pensando" no lugar de despejar "Tarefa criada (run-…)" no fio.
+    property bool awaitingReply: false
+    signal chatUpdated()
+
     property var providers: []
     property var modelsByProvider: ({})
     // Texto parcial de streaming por agente (transiente, não persistido).
@@ -78,12 +94,6 @@ Item {
 
     readonly property bool online: backend.connected
 
-    // Visão curada: só o que é resposta pro usuário (entrada dele + a
-    // conclusão consolidada) — sem os passos intermediários de coordenação
-    // entre agentes.
-    readonly property var finalLines: root.terminalLines.filter(function (l) {
-        return l.kind === "user" || l.kind === "reply" || l.kind === "error";
-    })
     // Visão de bastidores: toda a conversa/trabalho interno entre os agentes
     // (resultados de subtarefas, revisões, correções, gravações de
     // arquivo/memória) — sem a réplica final nem a entrada do usuário, que já
@@ -93,6 +103,35 @@ Item {
     })
 
     signal terminalUpdated()
+
+    // Quem está escrevendo AGORA e o que já saiu: alimenta a bolha ao vivo do
+    // chat (o texto aparecendo token a token, como num chat de IA comum).
+    // `null` quando ninguém está transmitindo.
+    readonly property var liveStream: {
+        const map = root.streamingByAgent;
+        for (const a of root.agents) {
+            const partial = map[a.id];
+            if (partial !== undefined && partial.length > 0)
+                return { id: a.id, name: a.name ?? "", agent: a, text: partial };
+        }
+        return null;
+    }
+
+    // Rótulo do que a equipe está fazendo, pra bolha de espera ("Atlas está
+    // planejando…"). Vazio quando ninguém está ocupado.
+    readonly property string busyLabel: {
+        for (const a of root.agents) {
+            if (!a.enabled)
+                continue;
+            const s = a.status ?? "idle";
+            if (s === "planning")      return (a.name ?? "") + " está planejando…";
+            if (s === "working")       return (a.name ?? "") + " está trabalhando…";
+            if (s === "reviewing")     return (a.name ?? "") + " está revisando…";
+            if (s === "communicating") return (a.name ?? "") + " está consolidando…";
+            if (s === "waiting")       return (a.name ?? "") + " aguardando capacidade…";
+        }
+        return "";
+    }
 
     // ------------------------------------------------------------------
     // Carregamento inicial e reconexão
@@ -122,6 +161,21 @@ Item {
         backend.call("events.recent", { limit: 100 }, function (r) {
             if (r)
                 root.timeline = r.events.slice(-200);
+        });
+        backend.call("conversation.recent", { limit: 100 }, function (r) {
+            if (!r || !r.turns)
+                return;
+            const msgs = [];
+            for (const t of r.turns) {
+                msgs.push({
+                    role: t.role === "user" ? "user" : "assistant",
+                    text: t.content ?? "",
+                    agent: t.agent_name ?? "",
+                    at: new Date(t.created_at)
+                });
+            }
+            root.chatMessages = msgs;
+            root.chatUpdated();
         });
         _loadUiSettings();
         _loadUserName();
@@ -247,6 +301,35 @@ Item {
         root.timeline = tl;
 
         switch (ev.event) {
+        case "run.started": {
+            // Mensagem que NÃO veio deste widget (voz, twctl, outro painel):
+            // sem isto o chat mostrava a resposta sem a pergunta. Quando foi
+            // daqui, o turno já está no fio — a comparação evita duplicar.
+            const req = ev.payload.request ?? "";
+            if (req.length === 0)
+                break;
+            let last = null;
+            for (let i = root.chatMessages.length - 1; i >= 0; i--) {
+                if (root.chatMessages[i].role === "user") {
+                    last = root.chatMessages[i];
+                    break;
+                }
+            }
+            // O request do run não é idêntico ao que foi digitado: a menção
+            // (`@forge ...`) e o comando (`/assign forge ...`) ficam pelo
+            // caminho, e texto colado grande vira um bloco de anexo. Então o
+            // desempate é: texto igual (já sem o prefixo) OU uma mensagem
+            // nossa recém-enviada.
+            const stripped = last
+                ? last.text.replace(/^(\/(assign|new|run)\s+\S+\s+|(@\S+\s+)+)/i, "").trim()
+                : "";
+            const recent = last && (new Date() - last.at) < 3000;
+            if (!recent && stripped !== req && (last ? last.text : "") !== req) {
+                _pushChat("user", req, "");
+                root.awaitingReply = true;
+            }
+            break;
+        }
         case "agent.status_changed": {
             const list = root.agents.slice();
             for (let i = 0; i < list.length; i++) {
@@ -294,12 +377,24 @@ Item {
             // Sempre a resposta final ao usuário — a conclusão consolidada
             // da conversa entre os agentes, tenha sido 1 ou vários.
             _pushTerminal("reply", "Resposta final:", ev.payload.summary ?? "");
+            _pushChat("assistant", ev.payload.summary ?? "",
+                      ev.payload.agent_name ?? "");
             break;
         case "file.written":
             _pushTerminal("event", "📝 " + (ev.payload.agent_name ?? "agente")
                           + " gravou: " + (ev.payload.path ?? "")
                           + " (" + (ev.payload.bytes ?? 0) + " bytes)", "");
             break;
+        case "input.attached": {
+            // Texto colado grande virou arquivo. Mostra uma linha compacta em
+            // vez de despejar o código inteiro no terminal.
+            const kb = Math.round((ev.payload.bytes ?? 0) / 1024 * 10) / 10;
+            _pushTerminal("event", "📄 texto grande salvo como anexo: "
+                          + (ev.payload.lines ?? 0) + " linhas, " + kb + " KB"
+                          + (ev.payload.truncated ? " (prompt recebeu só o começo)" : "")
+                          + " → " + (ev.payload.path ?? ""), "");
+            break;
+        }
         case "memory.saved":
             _pushTerminal("event", "🧠 " + (ev.payload.agent_name ?? "agente")
                           + " guardou na memória" + (ev.payload.scope === "equipe" ? " da equipe" : "")
@@ -341,6 +436,9 @@ Item {
             break;
         case "run.failed":
             _pushTerminal("error", "Execução falhou: " + (ev.payload.error ?? ""), "");
+            _pushChat("error", ev.payload.error === "cancelado"
+                      ? "Execução cancelada."
+                      : "Não consegui concluir: " + (ev.payload.error ?? ""), "");
             root.lastError = ev.payload.error ?? "";
             break;
         case "provider.rate_limited":
@@ -369,6 +467,31 @@ Item {
         root.terminalUpdated();
     }
 
+    // Uma mensagem nova no fio do chat. `agentName` vazio = a equipe inteira
+    // (ou o próprio app falando, nos avisos).
+    function _pushChat(role, text, agentName) {
+        if ((text ?? "").trim().length === 0)
+            return;
+        const msgs = root.chatMessages.slice(-199);
+        msgs.push({
+            role: role,
+            text: text,
+            agent: agentName ?? "",
+            at: new Date()
+        });
+        root.chatMessages = msgs;
+        if (role !== "user")
+            root.awaitingReply = false;
+        root.chatUpdated();
+    }
+
+    // Texto que o daemon devolve na hora só pra dizer "recebi" ("Tarefa
+    // enviada para X (run-…)"). Isso é estado, não conversa: vira a bolha de
+    // "pensando", não uma mensagem no fio.
+    function _isAckText(text) {
+        return /\((run|task)-[0-9a-f-]+\)\.?$/i.test((text ?? "").trim());
+    }
+
     function sendTerminal(input) {
         const trimmed = input.trim();
         if (trimmed.length === 0)
@@ -379,14 +502,20 @@ Item {
         root.lastUserMention = m ? m[1].toLowerCase() : "";
         root.userInputSeq += 1;
         _pushTerminal("user", trimmed, "");
+        _pushChat("user", trimmed, "");
+        root.awaitingReply = true;
         backend.call("terminal.input", { input: trimmed }, function (r, err) {
             if (err) {
                 _pushTerminal("error", err.message, "");
+                _pushChat("error", err.message, "");
                 return;
             }
             if (r.action === "clear") {
                 root.terminalLines = [];
+                root.chatMessages = [];
+                root.awaitingReply = false;
                 root.terminalUpdated();
+                root.chatUpdated();
                 return;
             }
             if (r.action === "settings") {
@@ -397,8 +526,14 @@ Item {
             // ir a provedor). Vai com detail preenchido, que é o que o serviço
             // de voz entende como "resposta final" — o ack comum tem detail
             // vazio justamente pra não ser falado.
-            if (r.text && r.text.length > 0)
+            if (r.text && r.text.length > 0) {
                 _pushTerminal("reply", r.text, r.speak ? r.text : "");
+                // Resposta pronta entra no fio; o "recebi, estou trabalhando"
+                // não — esse é o estado de espera, que a bolha de pensando já
+                // comunica melhor do que uma linha com um UUID dentro.
+                if (r.speak || !root._isAckText(r.text))
+                    _pushChat("assistant", r.text, "");
+            }
         });
     }
 
@@ -419,6 +554,8 @@ Item {
             backend.call("task.cancel", { task_id: k }, null);
         _pushTerminal("event", "⏹ Cancelamento solicitado ("
                       + keys.length + " execução(ões) ativa(s)).", "");
+        root.awaitingReply = false;
+        root.chatUpdated();
     }
 
     // A confirmação em si fica na UI (AgentsPage) — aqui só faz a chamada.
@@ -460,6 +597,18 @@ Item {
                 root.lastError = err.message;
             }
         });
+    }
+
+    // Agente pelo nome (como vem no histórico do chat). Devolve null quando
+    // a resposta foi da equipe inteira ou de um agente já excluído.
+    function agentByName(name) {
+        const key = (name ?? "").toLowerCase();
+        if (key.length === 0)
+            return null;
+        for (const a of root.agents)
+            if ((a.name ?? "").toLowerCase() === key)
+                return a;
+        return null;
     }
 
     // Candidatos de autocomplete para o terminal.

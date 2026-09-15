@@ -79,7 +79,7 @@ Rectangle {
                     required property var modelData
                     width: 36
                     height: 36
-                    radius: 18
+                    radius: Theme.radiusPill
                     color: "transparent"
                     border.width: 2
                     border.color: root.selectedAvatar === avatarChip.modelData
@@ -128,7 +128,7 @@ Rectangle {
             Rectangle {
                 width: saveText.implicitWidth + 24
                 height: 28
-                radius: 14
+                radius: Theme.radiusPill
                 color: Qt.alpha(Theme.accent, 0.25)
                 border.width: 1
                 border.color: Theme.accent
@@ -149,7 +149,7 @@ Rectangle {
             Rectangle {
                 width: cancelText.implicitWidth + 24
                 height: 28
-                radius: 14
+                radius: Theme.radiusPill
                 color: "transparent"
                 border.width: 1
                 border.color: Theme.border

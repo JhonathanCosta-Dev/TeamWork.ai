@@ -15,7 +15,7 @@ Column {
     Rectangle {
         width: newAgentText.implicitWidth + 24
         height: 28
-        radius: 14
+        radius: Theme.radiusPill
         color: root.showNewForm ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
         border.width: 1
         border.color: root.showNewForm ? Theme.accent : Theme.border
@@ -102,7 +102,7 @@ Column {
                                 required property var modelData
                                 width: provText.implicitWidth + 14
                                 height: 22
-                                radius: 11
+                                radius: Theme.radiusPill
                                 color: provChip.modelData.id === cell.modelData.provider_id
                                        ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                                 border.width: 1
@@ -162,7 +162,7 @@ Column {
                                 required property var modelData
                                 width: modelText.implicitWidth + 14
                                 height: 22
-                                radius: 11
+                                radius: Theme.radiusPill
                                 color: modelChip.modelData.id === cell.modelData.model_id
                                        ? Qt.alpha(Theme.success, 0.25) : Theme.surface
                                 border.width: 1
@@ -173,7 +173,7 @@ Column {
                                     anchors.centerIn: parent
                                     text: modelChip.modelData.id
                                     color: Theme.textPrimary
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.fontSizeTiny
                                     font.family: Theme.monoFamily
                                 }
                                 MouseArea {
@@ -194,7 +194,7 @@ Column {
                         Rectangle {
                             width: editText.implicitWidth + 20
                             height: 24
-                            radius: 12
+                            radius: Theme.radiusPill
                             color: cell.showEdit ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                             border.width: 1
                             border.color: cell.showEdit ? Theme.accent : Theme.border
@@ -215,7 +215,7 @@ Column {
                         Rectangle {
                             width: toggleText.implicitWidth + 20
                             height: 24
-                            radius: 12
+                            radius: Theme.radiusPill
                             color: Theme.surface
                             border.width: 1
                             border.color: cell.modelData.enabled ? Theme.danger : Theme.success
@@ -239,7 +239,7 @@ Column {
                         Rectangle {
                             width: deleteText.implicitWidth + 20
                             height: 24
-                            radius: 12
+                            radius: Theme.radiusPill
                             color: cell.confirmingDelete ? Qt.alpha(Theme.danger, 0.25) : Theme.surface
                             border.width: 1
                             border.color: Theme.danger
@@ -293,7 +293,7 @@ Column {
                                 Rectangle {
                                     width: cancelDeleteText.implicitWidth + 20
                                     height: 24
-                                    radius: 12
+                                    radius: Theme.radiusPill
                                     color: Theme.surface
                                     border.width: 1
                                     border.color: Theme.border
@@ -314,7 +314,7 @@ Column {
                                 Rectangle {
                                     width: confirmDeleteText.implicitWidth + 20
                                     height: 24
-                                    radius: 12
+                                    radius: Theme.radiusPill
                                     color: Qt.alpha(Theme.danger, 0.35)
                                     border.width: 1
                                     border.color: Theme.danger

@@ -180,6 +180,8 @@ pub mod events {
     /// Agente gravou um arquivo no workspace (payload: path, bytes).
     pub const FILE_WRITTEN: &str = "file.written";
     /// Agente gravou uma nota de memória (payload: scope, dir, slug, path, bytes).
+    /// Texto colado grande foi salvo como anexo em arquivo.
+    pub const INPUT_ATTACHED: &str = "input.attached";
     pub const MEMORY_SAVED: &str = "memory.saved";
     /// Memória (índice/notas) foi injetada no prompt da tarefa (payload: dir).
     pub const MEMORY_RECALLED: &str = "memory.recalled";
@@ -228,6 +230,11 @@ pub mod methods {
     /// o processo desanexado e registra o evento.
     pub const APP_OPEN: &str = "app.open";
     pub const EVENTS_RECENT: &str = "events.recent";
+    /// Histórico do chat (turnos do usuário e respostas finais), para a
+    /// interface remontar a conversa ao abrir.
+    pub const CONVERSATION_RECENT: &str = "conversation.recent";
+    /// Apaga o histórico do chat.
+    pub const CONVERSATION_CLEAR: &str = "conversation.clear";
     pub const SETTINGS_GET: &str = "settings.get";
     pub const SETTINGS_SET: &str = "settings.set";
     pub const DEMO_RUN: &str = "demo.run";
@@ -295,6 +302,12 @@ pub struct SettingsGetParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventsRecentParams {
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationRecentParams {
     #[serde(default)]
     pub limit: Option<u32>,
 }

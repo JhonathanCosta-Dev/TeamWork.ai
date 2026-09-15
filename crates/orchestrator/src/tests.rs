@@ -696,3 +696,262 @@ async fn memory_recalls_before_and_saves_after_own_and_team() {
     let reply = orch.handle_terminal_input("/memory").await.unwrap();
     assert!(reply.text.contains("ativa"));
 }
+
+/// Colar texto grande não pode mais ser recusado: tem de virar arquivo `.md` e
+/// a mensagem que chega ao agente tem de trazer o CAMINHO (pra quem abre
+/// arquivo) e o CONTEÚDO (pros agentes de um disparo, que não abrem).
+#[tokio::test]
+async fn big_paste_becomes_attachment_file_with_path_and_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = OrchestratorConfig::fast_for_tests();
+    config.attachments_root = Some(dir.path().to_path_buf());
+    let orch = make_orchestrator(config).await;
+    let forge = orch.find_agent("forge").await.unwrap();
+
+    let marker = "MARCADOR_UNICO_DO_TESTE";
+    let big = format!("{}\n{}", marker, "linha de codigo qualquer\n".repeat(700));
+    assert!(crate::attach::should_attach(&big));
+
+    let mut rx = orch.subscribe();
+    orch.submit(&big, &[forge.id.to_string()]).await.unwrap();
+    let seen = collect_until(&mut rx, |e| e.event == events::RUN_COMPLETED).await;
+    assert_eq!(count(&seen, events::INPUT_ATTACHED), 1);
+
+    // 1) o arquivo existe e guardou o conteúdo INTEIRO
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(files.len(), 1, "esperava exatamente um anexo");
+    let on_disk = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(on_disk.contains(marker), "anexo perdeu o conteúdo");
+    assert_eq!(
+        on_disk.matches("linha de codigo qualquer").count(),
+        700,
+        "anexo tem de guardar todas as linhas"
+    );
+
+    // 2) a mensagem da tarefa aponta o caminho E traz o conteúdo colado
+    let tasks = orch.storage.list_recent_tasks(10).await.unwrap();
+    let msg = &tasks.first().expect("nenhuma tarefa criada").message;
+    assert!(msg.contains("[ANEXO]"), "mensagem não virou bloco de anexo");
+    assert!(
+        msg.contains(&files[0].display().to_string()),
+        "mensagem não cita o caminho do anexo"
+    );
+    assert!(msg.contains(marker), "mensagem não traz o conteúdo colado");
+}
+
+// ---------------------------------------------------------------------------
+// Histórico da conversa — o que faz o chat lembrar do que foi dito.
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn conversation_records_user_message_and_final_answer() {
+    let orch = make_orchestrator(OrchestratorConfig::fast_for_tests()).await;
+    let mut rx = orch.subscribe();
+    let forge = orch.find_agent("forge").await.unwrap();
+
+    orch.submit("primeira pergunta", &[forge.id.to_string()])
+        .await
+        .unwrap();
+    collect_until(&mut rx, |e| e.event == events::RUN_COMPLETED).await;
+
+    let turns = orch.storage.recent_conversation(10).await.unwrap();
+    assert_eq!(turns.len(), 2, "esperava o turno do usuário e a resposta");
+    assert_eq!(turns[0].role, "user");
+    assert_eq!(turns[0].content, "primeira pergunta");
+    assert_eq!(turns[1].role, "assistant");
+    assert!(!turns[1].content.trim().is_empty());
+    assert_eq!(turns[1].agent_name, forge.name);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn second_message_carries_the_previous_turns() {
+    let orch = make_orchestrator(OrchestratorConfig::fast_for_tests()).await;
+    let mut rx = orch.subscribe();
+    let forge = orch.find_agent("forge").await.unwrap();
+
+    orch.submit("pergunta um", &[forge.id.to_string()])
+        .await
+        .unwrap();
+    collect_until(&mut rx, |e| e.event == events::RUN_COMPLETED).await;
+
+    // O histórico do segundo run é lido ANTES de gravar a mensagem nova, então
+    // contém exatamente a ida e a volta anteriores — e nunca a si mesmo.
+    let history = orch.load_history().await;
+    let msgs = history.as_messages();
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[0].content, "pergunta um");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn greeting_answered_locally_still_enters_the_history() {
+    let orch = make_orchestrator(OrchestratorConfig::fast_for_tests()).await;
+    let reply = orch.handle_terminal_input("bom dia").await.unwrap();
+    assert!(reply.speak, "saudação deve ser respondida na hora");
+
+    let turns = orch.storage.recent_conversation(10).await.unwrap();
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0].content, "bom dia");
+    assert_eq!(turns[1].content, reply.text);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn clear_wipes_the_conversation() {
+    let orch = make_orchestrator(OrchestratorConfig::fast_for_tests()).await;
+    orch.handle_terminal_input("bom dia").await.unwrap();
+    assert!(!orch
+        .storage
+        .recent_conversation(10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let reply = orch.handle_terminal_input("/clear").await.unwrap();
+    assert_eq!(reply.action.as_deref(), Some("clear"));
+    assert!(orch
+        .storage
+        .recent_conversation(10)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Provedor espião: guarda os prompts recebidos, para verificar o que a equipe
+// realmente enxerga. É o único jeito honesto de testar "o histórico chega ao
+// modelo" — o resto é inferência a partir do que o banco guardou.
+// ---------------------------------------------------------------------------
+
+struct SpyProvider {
+    calls: std::sync::Mutex<Vec<Vec<teamwork_providers::ChatMessage>>>,
+}
+
+impl SpyProvider {
+    fn new() -> Self {
+        Self {
+            calls: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl teamwork_providers::AiProvider for SpyProvider {
+    fn id(&self) -> &str {
+        "mock"
+    }
+    fn display_name(&self) -> &str {
+        "Spy"
+    }
+    fn capabilities(&self) -> teamwork_providers::ProviderCapabilities {
+        teamwork_providers::ProviderCapabilities {
+            streaming: false,
+            multimodal: false,
+            audio_transcription: false,
+        }
+    }
+    async fn health_check(
+        &self,
+    ) -> std::result::Result<teamwork_providers::ProviderHealth, teamwork_providers::ProviderError>
+    {
+        Ok(teamwork_providers::ProviderHealth {
+            ok: true,
+            message: "spy".into(),
+            latency_ms: Some(0),
+        })
+    }
+    async fn list_models(
+        &self,
+    ) -> std::result::Result<Vec<teamwork_providers::ModelInfo>, teamwork_providers::ProviderError>
+    {
+        Ok(vec![])
+    }
+    async fn complete(
+        &self,
+        request: teamwork_providers::CompletionRequest,
+    ) -> std::result::Result<
+        teamwork_providers::CompletionResponse,
+        teamwork_providers::ProviderError,
+    > {
+        self.calls.lock().unwrap().push(request.messages.clone());
+        Ok(teamwork_providers::CompletionResponse {
+            content: "resposta do espião".into(),
+            model: request.model,
+            usage: teamwork_providers::TokenUsage::default(),
+        })
+    }
+    async fn stream(
+        &self,
+        request: teamwork_providers::CompletionRequest,
+    ) -> std::result::Result<teamwork_providers::CompletionStream, teamwork_providers::ProviderError>
+    {
+        let response = self.complete(request).await?;
+        Ok(Box::pin(futures::stream::once(async move {
+            Ok(teamwork_providers::StreamChunk {
+                delta: response.content,
+                done: true,
+                progress: false,
+            })
+        })))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_previous_turns_reach_the_model_as_chat_messages() {
+    use teamwork_providers::Role;
+
+    let spy = Arc::new(SpyProvider::new());
+    let storage = Arc::new(Storage::open_in_memory().unwrap());
+    let mut registry = ProviderRegistry::new();
+    registry.register(spy.clone(), 10_000);
+    let orch = Orchestrator::new(
+        storage,
+        Arc::new(registry),
+        OrchestratorConfig::fast_for_tests(),
+    )
+    .await
+    .unwrap();
+
+    let mut rx = orch.subscribe();
+    let forge = orch.find_agent("forge").await.unwrap();
+
+    orch.submit("qual é a capital da França?", &[forge.id.to_string()])
+        .await
+        .unwrap();
+    collect_until(&mut rx, |e| e.event == events::RUN_COMPLETED).await;
+
+    orch.submit("e a população de lá?", &[forge.id.to_string()])
+        .await
+        .unwrap();
+    collect_until(&mut rx, |e| e.event == events::RUN_COMPLETED).await;
+
+    let calls = spy.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 2, "uma chamada por pergunta");
+
+    // Primeira pergunta: nada antes dela — só o sistema e o pedido.
+    let first: Vec<_> = calls[0].iter().filter(|m| m.role != Role::System).collect();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].content, "qual é a capital da França?");
+
+    // Segunda: a ida e a volta anteriores chegam como turnos de verdade,
+    // antes do pedido novo — é isto que faz "e a população de lá?" ter um
+    // "lá" para se referir.
+    let second: Vec<_> = calls[1].iter().filter(|m| m.role != Role::System).collect();
+    assert_eq!(second.len(), 3, "histórico (2) + pergunta nova (1)");
+    assert_eq!(second[0].role, Role::User);
+    assert_eq!(second[0].content, "qual é a capital da França?");
+    assert_eq!(second[1].role, Role::Assistant);
+    assert!(second[1].content.contains("resposta do espião"));
+    assert!(
+        second[1].content.contains("Forge"),
+        "a resposta é atribuída a quem respondeu"
+    );
+    assert_eq!(second[2].role, Role::User);
+    assert_eq!(second[2].content, "e a população de lá?");
+
+    // E o prompt de sistema avisa que é uma conversa em andamento.
+    let system = calls[1].iter().find(|m| m.role == Role::System).unwrap();
+    assert!(system.content.contains("Conversa em andamento"));
+}

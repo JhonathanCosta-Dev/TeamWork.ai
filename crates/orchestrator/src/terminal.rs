@@ -48,6 +48,11 @@ pub const USER_NAME_SETTING: &str = "user.name";
 
 impl Orchestrator {
     /// Saudação pronta pra devolver na hora, se a mensagem for só isso.
+    ///
+    /// Responder aqui pula o `submit`, que é quem normalmente grava a conversa
+    /// — então a gravação é feita neste caminho também. Sem isso, um "bom dia"
+    /// e sua resposta sumiriam do histórico e o turno seguinte começaria do
+    /// nada de novo.
     async fn greeting_for(self: &Arc<Self>, text: &str) -> Option<String> {
         let name = self
             .storage
@@ -56,7 +61,10 @@ impl Orchestrator {
             .ok()
             .flatten()
             .and_then(|v| v.as_str().map(String::from));
-        crate::greeting::reply(text, name.as_deref())
+        let reply = crate::greeting::reply(text, name.as_deref())?;
+        self.record_user_turn(text).await;
+        self.record_assistant_turn(None, "", &reply).await;
+        Some(reply)
     }
 
     pub async fn handle_terminal_input(
@@ -179,12 +187,17 @@ impl Orchestrator {
                     self.active_task_count()
                 )))
             }
-            Command::Clear => Ok(TerminalReply {
-                text: String::new(),
-                action: Some("clear".into()),
-                run_id: None,
-                speak: false,
-            }),
+            Command::Clear => {
+                // Limpar a tela sem limpar o histórico deixaria a equipe
+                // respondendo a um contexto que o usuário não vê mais.
+                self.clear_conversation().await?;
+                Ok(TerminalReply {
+                    text: String::new(),
+                    action: Some("clear".into()),
+                    run_id: None,
+                    speak: false,
+                })
+            }
             Command::Settings => Ok(TerminalReply {
                 text: "Abrindo configurações…".into(),
                 action: Some("settings".into()),

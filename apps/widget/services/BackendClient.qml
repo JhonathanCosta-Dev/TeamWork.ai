@@ -8,7 +8,14 @@ Item {
     id: root
 
     readonly property bool connected: socket.connected
+    // Mesma regra do daemon e do twctl: TEAMWORK_AI_SOCKET manda, senão o
+    // caminho XDG padrão. Sem isso, subir um daemon em outro socket (teste,
+    // desenvolvimento, duas versões lado a lado) deixava o widget falando com
+    // o daemon errado sem dar um pio.
     property string socketPath: {
+        const override = Quickshell.env("TEAMWORK_AI_SOCKET");
+        if (override && override.length > 0)
+            return override;
         const dir = Quickshell.env("XDG_RUNTIME_DIR");
         return (dir && dir.length > 0 ? dir : "/tmp") + "/teamwork-ai/teamwork-ai.sock";
     }

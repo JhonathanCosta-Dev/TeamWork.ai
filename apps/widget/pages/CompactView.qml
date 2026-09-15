@@ -12,12 +12,23 @@ Rectangle {
     signal terminalRequested()
     signal copilotRequested()
 
-    radius: Theme.radius
+    radius: Theme.radiusLarge
     color: Theme.background
     border.width: 1
     border.color: Theme.border
     implicitWidth: 96
+    clip: true
     implicitHeight: column.implicitHeight + Theme.padding * 2
+
+    // Mesma assinatura visual das telas maiores, em miniatura.
+    Rectangle {
+        anchors.fill: parent
+        radius: parent.radius
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.alpha(Theme.accent, 0.07) }
+            GradientStop { position: 0.5; color: "transparent" }
+        }
+    }
 
     Column {
         id: column
@@ -32,11 +43,18 @@ Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: 5
             Rectangle {
-                width: 8
-                height: 8
-                radius: 4
+                width: 7
+                height: 7
+                radius: 3.5
                 anchors.verticalCenter: parent.verticalCenter
                 color: root.store.online ? Theme.success : Theme.danger
+
+                SequentialAnimation on opacity {
+                    running: root.store.online && root.store.activeTasks > 0
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 0.3; duration: 700 }
+                    NumberAnimation { from: 0.3; to: 1.0; duration: 700 }
+                }
             }
             Text {
                 text: root.store.online ? "online" : "offline"
@@ -63,10 +81,12 @@ Rectangle {
         Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             visible: root.store.activeTasks > 0
-            width: taskCount.implicitWidth + 14
-            height: 20
-            radius: 10
-            color: Qt.alpha(Theme.accent, 0.18)
+            width: taskCount.implicitWidth + 16
+            height: 21
+            radius: Theme.radiusPill
+            color: Qt.alpha(Theme.accent, 0.16)
+            border.width: 1
+            border.color: Qt.alpha(Theme.accent, 0.4)
             Text {
                 id: taskCount
                 anchors.centerIn: parent

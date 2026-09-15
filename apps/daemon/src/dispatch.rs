@@ -7,9 +7,9 @@ use std::sync::Arc;
 use teamwork_domain::{Agent, Capability};
 use teamwork_orchestrator::{Orchestrator, OrchestratorError};
 use teamwork_protocol::{
-    error_codes, methods, AgentSetModelParams, AgentSetProviderParams, EventsRecentParams,
-    ProviderModelsParams, Request, Response, SettingsGetParams, SettingsSetParams,
-    TaskCreateParams, TaskIdParams, TerminalInputParams, VoiceTranscribeParams,
+    error_codes, methods, AgentSetModelParams, AgentSetProviderParams, ConversationRecentParams,
+    EventsRecentParams, ProviderModelsParams, Request, Response, SettingsGetParams,
+    SettingsSetParams, TaskCreateParams, TaskIdParams, TerminalInputParams, VoiceTranscribeParams,
 };
 use teamwork_providers::ProviderRegistry;
 use teamwork_storage::Storage;
@@ -369,8 +369,21 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 Ok(p) => p,
                 Err(r) => return r,
             };
-            if p.input.len() > 8192 {
-                return Response::err(id, error_codes::INVALID_PARAMS, "entrada longa demais");
+            // O teto era 8 KiB e RECUSAVA a mensagem: colar um arquivo de
+            // código inteiro não chegava ao agente. Agora o teto é só um
+            // guarda-corpo contra abuso; texto grande vira anexo em arquivo
+            // (orchestrator::attach), com trecho no prompt e o caminho pra
+            // quem consegue abrir arquivo.
+            if p.input.len() > teamwork_orchestrator::attach::MAX_INPUT_BYTES {
+                return Response::err(
+                    id,
+                    error_codes::INVALID_PARAMS,
+                    format!(
+                        "entrada longa demais ({} bytes; máximo {})",
+                        p.input.len(),
+                        teamwork_orchestrator::attach::MAX_INPUT_BYTES
+                    ),
+                );
             }
             match state.orchestrator.handle_terminal_input(&p.input).await {
                 Ok(reply) => Response::ok(id, serde_json::to_value(reply).unwrap_or(json!({}))),
@@ -497,6 +510,21 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 Err(e) => Response::err(id, error_codes::INTERNAL, e.to_string()),
             }
         }
+
+        methods::CONVERSATION_RECENT => {
+            let p: ConversationRecentParams =
+                params(&req).unwrap_or(ConversationRecentParams { limit: None });
+            let limit = p.limit.unwrap_or(100).min(500);
+            match state.orchestrator.recent_conversation(limit).await {
+                Ok(turns) => Response::ok(id, json!({ "turns": turns })),
+                Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
+            }
+        }
+
+        methods::CONVERSATION_CLEAR => match state.orchestrator.clear_conversation().await {
+            Ok(()) => Response::ok(id, json!({ "ok": true })),
+            Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
+        },
 
         methods::SETTINGS_GET => {
             let p: SettingsGetParams = match params(&req) {

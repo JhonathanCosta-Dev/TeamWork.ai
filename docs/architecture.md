@@ -100,6 +100,13 @@ protocol ◄── daemon ──► orchestrator ──► providers
 7. Coordenador consolida (`RunSummary`) e o run é concluído.
 8. Cada transição vira evento persistido e transmitido ao widget.
 
+O histórico da conversa (tabela `conversation`) é lido UMA vez, no `submit`, e
+viaja com o run: se cada subtarefa fosse buscá-lo por conta própria, as que
+rodam em paralelo veriam versões diferentes da conversa — e a resposta do
+próprio run entraria no contexto dele mesmo. Ele entra no prompt do executor
+como turnos `user`/`assistant`, e como transcrição curta no planejamento e na
+consolidação, onde o pedido é único e não um diálogo.
+
 ## Estados de agente
 
 `idle, planning, waiting, working, communicating, reviewing, completed, paused,

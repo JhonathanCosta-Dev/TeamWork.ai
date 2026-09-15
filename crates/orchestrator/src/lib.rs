@@ -1,6 +1,8 @@
 //! Orquestrador do Team Work AI: execução paralela de subtarefas com
 //! dependências, cancelamento, retry, pausa, limites anti-loop e consolidação.
 
+pub mod attach;
+pub mod conversation;
 pub mod files;
 pub mod greeting;
 pub mod knowledge;
@@ -9,6 +11,7 @@ mod planner;
 mod terminal;
 pub mod web;
 
+pub use conversation::History;
 pub use planner::PlannedSubtask;
 pub use terminal::TerminalReply;
 
@@ -61,6 +64,9 @@ pub struct OrchestratorConfig {
     pub max_plan_subtasks: usize,
     pub max_output_tokens: Option<u32>,
     pub retry: RetryPolicy,
+    /// Onde salvar textos grandes colados no terminal (`None` = não salva;
+    /// a mensagem segue inteira no prompt, sujeita ao teto do provedor).
+    pub attachments_root: Option<std::path::PathBuf>,
     /// Raiz padrão da memória permanente por agente (`None` = memória
     /// desativada, salvo se uma raiz for definida via setting `memory.root`).
     pub memory_root: Option<std::path::PathBuf>,
@@ -87,6 +93,7 @@ impl Default for OrchestratorConfig {
             max_output_tokens: Some(2048),
             retry: RetryPolicy::default(),
             memory_root: None,
+            attachments_root: None,
             max_model_fallbacks: 3,
             max_web_searches: 3,
         }
@@ -155,6 +162,9 @@ pub struct Orchestrator {
     task_cancels: Mutex<HashMap<String, CancellationToken>>,
     run_cancels: Mutex<HashMap<String, CancellationToken>>,
     run_calls: Mutex<HashMap<String, u32>>,
+    /// Histórico da conversa capturado no `submit`, por run. Lido uma vez e
+    /// reutilizado por todas as subtarefas do run — ver `conversation.rs`.
+    run_history: Mutex<HashMap<String, conversation::History>>,
     paused: Mutex<HashSet<String>>,
     pause_notify: Notify,
     active_tasks: AtomicUsize,
@@ -181,6 +191,7 @@ impl Orchestrator {
             task_cancels: Mutex::new(HashMap::new()),
             run_cancels: Mutex::new(HashMap::new()),
             run_calls: Mutex::new(HashMap::new()),
+            run_history: Mutex::new(HashMap::new()),
             paused: Mutex::new(HashSet::new()),
             pause_notify: Notify::new(),
             active_tasks: AtomicUsize::new(0),
@@ -482,11 +493,125 @@ impl Orchestrator {
     // Criação e controle de runs/tarefas
     // ------------------------------------------------------------------
 
+    // ------------------------------------------------------------------
+    // Histórico da conversa (ver crates/orchestrator/src/conversation.rs)
+    // ------------------------------------------------------------------
+
+    /// Últimos turnos do chat. Falha de leitura não derruba o pedido — o
+    /// agente responde sem contexto, que é o comportamento antigo.
+    pub(crate) async fn load_history(&self) -> conversation::History {
+        match self
+            .storage
+            .recent_conversation(conversation::HISTORY_TURNS)
+            .await
+        {
+            Ok(turns) => conversation::History::from_storage(turns),
+            Err(e) => {
+                tracing::warn!("histórico da conversa indisponível: {e}");
+                conversation::History::default()
+            }
+        }
+    }
+
+    /// Histórico capturado no `submit` deste run (vazio para runs que não
+    /// vieram do chat, como `retry`).
+    pub(crate) async fn history_for_run(&self, run_id: &RunId) -> conversation::History {
+        self.run_history
+            .lock()
+            .await
+            .get(run_id.as_str())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(crate) async fn record_user_turn(&self, content: &str) {
+        if let Err(e) = self
+            .storage
+            .insert_conversation_turn(None, "user", "", content)
+            .await
+        {
+            tracing::warn!("não consegui gravar o turno do usuário: {e}");
+        }
+    }
+
+    pub(crate) async fn record_assistant_turn(
+        &self,
+        run_id: Option<&str>,
+        agent_name: &str,
+        content: &str,
+    ) {
+        if content.trim().is_empty() {
+            return;
+        }
+        if let Err(e) = self
+            .storage
+            .insert_conversation_turn(run_id, "assistant", agent_name, content)
+            .await
+        {
+            tracing::warn!("não consegui gravar a resposta no histórico: {e}");
+        }
+    }
+
+    /// Apaga a conversa (`/clear`).
+    pub async fn clear_conversation(&self) -> Result<()> {
+        self.storage.clear_conversation().await?;
+        Ok(())
+    }
+
+    /// Turnos recentes para a interface montar o chat ao abrir.
+    pub async fn recent_conversation(&self, limit: u32) -> Result<Vec<serde_json::Value>> {
+        let turns = self.storage.recent_conversation(limit).await?;
+        Ok(turns
+            .into_iter()
+            .map(|t| {
+                json!({
+                    "id": t.id,
+                    "run_id": t.run_id,
+                    "role": t.role,
+                    "agent_name": t.agent_name,
+                    "content": t.content,
+                    "created_at": t.created_at,
+                })
+            })
+            .collect())
+    }
+
     /// Cria e inicia um run. `agent_ids` vazio → modo coordenado.
     pub async fn submit(self: &Arc<Self>, message: &str, agent_ids: &[String]) -> Result<RunId> {
         let message = message.trim();
         if message.is_empty() {
             return Err(OrchestratorError::Invalid("mensagem vazia".into()));
+        }
+
+        // Texto colado grande: salva num .md e troca a mensagem por um bloco
+        // com TRECHO + CAMINHO. O trecho é pros agentes de um disparo (Gemini,
+        // Groq — não abrem arquivo); o caminho é pro provedor `claude-code`,
+        // que abre. Ver crates/orchestrator/src/attach.rs.
+        let owned_message;
+        let mut message = message;
+        if attach::should_attach(message) {
+            if let Some(root) = &self.config.attachments_root {
+                let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+                match attach::save(root, message, &stamp) {
+                    Ok(att) => {
+                        self.emit(Event::new(
+                            teamwork_protocol::events::INPUT_ATTACHED,
+                            serde_json::json!({
+                                "path": att.path.display().to_string(),
+                                "bytes": att.bytes,
+                                "lines": att.lines,
+                                "truncated": att.truncated,
+                            }),
+                        ))
+                        .await;
+                        owned_message = attach::prompt_block(&att, "");
+                        message = &owned_message;
+                    }
+                    Err(e) => {
+                        tracing::warn!("anexo não pôde ser salvo: {e}");
+                    }
+                }
+            }
         }
 
         let mut agents = Vec::new();
@@ -510,6 +635,11 @@ impl Orchestrator {
             _ => ExecutionMode::Multiple,
         };
 
+        // Histórico ANTES de gravar o turno atual: o que o modelo precisa é o
+        // que veio antes; a mensagem de agora entra como o pedido em si.
+        let history = self.load_history().await;
+        self.record_user_turn(message).await;
+
         let run = Run::new(message, mode);
         self.storage.insert_run(&run).await?;
         let run_token = CancellationToken::new();
@@ -518,6 +648,10 @@ impl Orchestrator {
             .await
             .insert(run.id.to_string(), run_token.clone());
         self.run_calls.lock().await.insert(run.id.to_string(), 0);
+        self.run_history
+            .lock()
+            .await
+            .insert(run.id.to_string(), history);
 
         self.emit(
             Event::new(
@@ -548,6 +682,7 @@ impl Orchestrator {
             }
             this.run_cancels.lock().await.remove(run_clone.id.as_str());
             this.run_calls.lock().await.remove(run_clone.id.as_str());
+            this.run_history.lock().await.remove(run_clone.id.as_str());
         });
 
         Ok(run.id)
@@ -827,13 +962,35 @@ impl Orchestrator {
         // Consolidação final.
         let summary = self.consolidate(run, &outcomes, run_token.clone()).await;
         let partial = outcomes.len() < tasks.len();
+        // A resposta final vira o próximo "assistant" do histórico — é o que o
+        // usuário viu, então é o que a conversa seguinte deve lembrar.
+        let responder = if outcomes.len() == 1 {
+            outcomes
+                .values()
+                .next()
+                .map(|o| o.agent_name.clone())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        self.record_assistant_turn(Some(run.id.as_str()), &responder, &summary)
+            .await;
         self.storage
             .update_run(&run.id, RunStatus::Completed, Some(&summary))
             .await?;
         self.emit(
             Event::new(
                 events::RUN_COMPLETED,
-                json!({ "summary": summary, "partial": partial, "subtasks_total": tasks.len(), "subtasks_completed": outcomes.len() }),
+                json!({
+                    "summary": summary,
+                    "partial": partial,
+                    // Quem assina a resposta: o agente único que a produziu,
+                    // ou vazio quando foi a equipe inteira (aí a bolha sai
+                    // como "Equipe"). A interface usa isso pro avatar.
+                    "agent_name": responder,
+                    "subtasks_total": tasks.len(),
+                    "subtasks_completed": outcomes.len(),
+                }),
             )
             .with_run(run.id.to_string()),
         )
@@ -1352,7 +1509,15 @@ impl Orchestrator {
                 .await;
             }
         }
+        // Conversa anterior: entra como turnos user/assistant de verdade, antes
+        // do contexto das subtarefas e do pedido atual. É o que transforma
+        // "cada mensagem é um começo" em conversa contínua.
+        let history = self.history_for_run(&run_id).await;
+        if !history.is_empty() {
+            system_prompt.push_str(conversation::SYSTEM_HINT);
+        }
         let mut messages = vec![ChatMessage::system(&system_prompt)];
+        messages.extend(history.as_messages());
         for ctx in &context {
             let mut m = AgentMessage::new(
                 MessageType::Context,
@@ -1995,17 +2160,29 @@ impl Orchestrator {
         )
         .await;
 
-        let mut prompt = format!(
+        let history = self.history_for_run(&run.id).await;
+        let mut prompt = String::new();
+        if !history.is_empty() {
+            prompt.push_str(&format!(
+                "[CONVERSA ANTERIOR]\n{}\n",
+                history.as_transcript(8)
+            ));
+        }
+        prompt.push_str(&format!(
             "[CONSOLIDATE]\nSolicitação original: {}\n\nResultados das subtarefas:\n\n",
             run.request
-        );
+        ));
         for o in &sections {
             prompt.push_str(&format!(
                 "### {} ({})\n{}\n\n",
                 o.title, o.agent_name, o.content
             ));
         }
-        prompt.push_str("Produza uma resposta final consolidada, clara e concisa para o usuário.");
+        prompt.push_str(
+            "Produza uma resposta final consolidada, clara e concisa para o usuário. \
+             Fale direto com ele, continuando a conversa — sem narrar o processo interno \
+             da equipe, sem listar subtarefas e sem repetir o que já foi dito antes.",
+        );
 
         let request = CompletionRequest {
             model: coordinator.model_id.clone(),

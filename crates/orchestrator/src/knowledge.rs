@@ -178,22 +178,80 @@ pub fn needs_vault(message: &str) -> bool {
     let words = m.split_whitespace().count();
 
     const WORK: &[&str] = &[
-        "cria", "criar", "crie", "implementa", "implementar", "refatora", "refatorar",
-        "analisa", "analisar", "revisa", "revisar", "corrig", "ajusta", "ajustar",
-        "otimiza", "otimizar", "migra", "migrar", "documenta", "testa", "testar",
-        "escreve", "escrever", "gera", "gerar", "instala", "configura", "audita",
-        "skill", "vault", "nota", "como agir", "padrão", "padrao", "arquitetura",
-        "código", "codigo", "bug", "erro", "seção", "secao", "section", "snippet",
-        "liquid", "shopify", "tema", "theme", "css", "html", "javascript", "qml",
-        "rust", "python", "commit", "branch", "deploy", "projeto", "componente",
-        "template", "schema", "metafield", "checkout", "carrinho", "produto",
+        "cria",
+        "criar",
+        "crie",
+        "implementa",
+        "implementar",
+        "refatora",
+        "refatorar",
+        "analisa",
+        "analisar",
+        "revisa",
+        "revisar",
+        "corrig",
+        "ajusta",
+        "ajustar",
+        "otimiza",
+        "otimizar",
+        "migra",
+        "migrar",
+        "documenta",
+        "testa",
+        "testar",
+        "escreve",
+        "escrever",
+        "gera",
+        "gerar",
+        "instala",
+        "configura",
+        "audita",
+        "skill",
+        "vault",
+        "nota",
+        "como agir",
+        "padrão",
+        "padrao",
+        "arquitetura",
+        "código",
+        "codigo",
+        "bug",
+        "erro",
+        "seção",
+        "secao",
+        "section",
+        "snippet",
+        "liquid",
+        "shopify",
+        "tema",
+        "theme",
+        "css",
+        "html",
+        "javascript",
+        "qml",
+        "rust",
+        "python",
+        "commit",
+        "branch",
+        "deploy",
+        "projeto",
+        "componente",
+        "template",
+        "schema",
+        "metafield",
+        "checkout",
+        "carrinho",
+        "produto",
     ];
     if WORK.iter().any(|k| m.contains(k)) {
         return true;
     }
     // Caminho ou nome de arquivo ("product-main.liquid", "apps/widget").
     if m.split_whitespace().any(|w| {
-        (w.contains('.') && w.rsplit('.').next().is_some_and(|e| (2..=5).contains(&e.len())))
+        (w.contains('.')
+            && w.rsplit('.')
+                .next()
+                .is_some_and(|e| (2..=5).contains(&e.len())))
             || w.contains('/')
     }) {
         return true;

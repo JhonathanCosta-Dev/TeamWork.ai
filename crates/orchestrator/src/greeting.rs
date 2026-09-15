@@ -82,11 +82,55 @@ const GREETINGS: &[&str] = &[
 /// Palavras que não contam como "pedido" ao decidir se a mensagem é só
 /// saudação: nome do agente, interjeições e o resto do enfeite.
 const FILLER_WORDS: &[&str] = &[
-    "jorginho", "jorge", "ai", "ae", "tudo", "bem", "bom", "boa", "dia", "tarde",
-    "noite", "e", "eh", "voce", "vc", "tu", "ta", "esta", "estas", "como", "vai",
-    "vais", "por", "favor", "pf", "entao", "certo", "aqui", "agora", "hoje", "a",
-    "o", "de", "da", "do", "pra", "para", "ne", "hein", "ok", "sim", "muito",
-    "obrigado", "obrigada", "brigado", "valeu", "vlw", "tranquilo", "tranquila",
+    "jorginho",
+    "jorge",
+    "ai",
+    "ae",
+    "tudo",
+    "bem",
+    "bom",
+    "boa",
+    "dia",
+    "tarde",
+    "noite",
+    "e",
+    "eh",
+    "voce",
+    "vc",
+    "tu",
+    "ta",
+    "esta",
+    "estas",
+    "como",
+    "vai",
+    "vais",
+    "por",
+    "favor",
+    "pf",
+    "entao",
+    "certo",
+    "aqui",
+    "agora",
+    "hoje",
+    "a",
+    "o",
+    "de",
+    "da",
+    "do",
+    "pra",
+    "para",
+    "ne",
+    "hein",
+    "ok",
+    "sim",
+    "muito",
+    "obrigado",
+    "obrigada",
+    "brigado",
+    "valeu",
+    "vlw",
+    "tranquilo",
+    "tranquila",
 ];
 
 /// Minúsculas, sem acento, só letras/números e espaço simples. Mesmo pré-passo
@@ -162,8 +206,7 @@ fn is_pure_greeting(norm: &str) -> bool {
             rest.replace_range(at..at + needle.len(), " ");
         }
     }
-    rest.split_whitespace()
-        .all(|w| FILLER_WORDS.contains(&w))
+    rest.split_whitespace().all(|w| FILLER_WORDS.contains(&w))
 }
 
 fn period() -> &'static str {

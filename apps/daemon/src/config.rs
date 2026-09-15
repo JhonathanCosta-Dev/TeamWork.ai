@@ -37,6 +37,7 @@ impl Default for DaemonConfig {
         rpm.insert("local".to_string(), 600);
         let orchestrator = OrchestratorConfig {
             memory_root: Some(crate::paths::memory_dir()),
+            attachments_root: Some(crate::paths::attachments_dir()),
             ..OrchestratorConfig::default()
         };
         Self {

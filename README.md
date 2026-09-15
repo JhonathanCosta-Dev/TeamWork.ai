@@ -3,14 +3,21 @@
 Uma pequena equipe de agentes de IA trabalhando no seu desktop Linux.
 Daemon em **Rust** orquestra agentes em paralelo (Gemini, Groq, OpenRouter,
 Anthropic ou modo simulado); um widget **Quickshell/QML** mostra os avatares trabalhando,
-com terminal para delegar tarefas: `@forge implemente esta função`. Cada
-agente tem uma **memória permanente** entre execuções (ativa por padrão,
-sem configuração) — consulta o que já aprendeu antes de responder e pode
-salvar descobertas, só suas ou compartilhadas com a equipe.
+com um **chat** para conversar com a equipe e delegar tarefas:
+`@forge implemente esta função`. A conversa tem memória — os últimos turnos vão
+no prompt, então dá pra dizer "e agora refatora isso" sem repetir o que é
+"isso" — e continua onde parou quando você fecha e reabre o app. Cada agente
+tem ainda uma **memória permanente** entre execuções (ativa por padrão, sem
+configuração) — consulta o que já aprendeu antes de responder e pode salvar
+descobertas, só suas ou compartilhadas com a equipe.
+
+<p align="center">
+  <img src="docs/screenshots/widget.png" alt="Team Work AI — widget Quickshell mostrando a equipe (Atlas, Forge) e o terminal de agentes" width="440">
+</p>
 
 **Estado atual:** MVP funcional — Fases 1–3 completas (daemon, provedores
 reais, orquestração), Fase 4 implementada em QML (validar no seu Quickshell),
-Fase 5 entregue (systemd, PKGBUILD, docs). 92 testes passando sem rede.
+Fase 5 entregue (systemd, PKGBUILD, docs). 105 testes passando sem rede.
 
 ## Arquitetura
 
@@ -82,7 +89,7 @@ quickshell -p apps/widget/shell.qml      # terminal 2 — widget
 ./scripts/demo.sh                        # terminal 3 — demonstração
 ```
 
-No terminal do widget (ou via `twctl terminal "…"`):
+No chat do widget (ou via `twctl terminal "…"`):
 
 ```text
 /help
@@ -93,12 +100,18 @@ No terminal do widget (ou via `twctl terminal "…"`):
 /provider forge groq
 /model forge <modelo-listado>
 /cancel <task-id>
+/clear                  # limpa a tela E o histórico da conversa
 ```
 
 ## Modos do widget
 
-Compacto (pastilha na borda), expandido (abas + terminal), tela cheia (sala de
-operações) e **copiloto**.
+Compacto (pastilha na borda), expandido (chat + abas de agentes/tarefas/config),
+tela cheia (sala de operações) e **copiloto**.
+
+O chat é a tela principal nos dois primeiros: suas mensagens e as respostas da
+equipe em bolhas, com o texto aparecendo enquanto é escrito. A coordenação
+interna entre os agentes fica na aba **Bastidores** — perto, mas fora do fio da
+conversa.
 
 No copiloto fica só o rosto do Jorginho sobreposto à área de trabalho, no
 monitor e borda escolhidos em Config. Ele não reserva espaço na tela e nunca

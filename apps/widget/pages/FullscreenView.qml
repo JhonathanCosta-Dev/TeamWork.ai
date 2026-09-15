@@ -36,7 +36,33 @@ Rectangle {
                                      && root.store.puppetMode
                                      && root.faceTrack.present
 
-    color: Qt.rgba(0.05, 0.06, 0.08, 0.97)
+    color: Theme.backgroundDeep
+
+    // Profundidade: um degradê quase preto com um sopro de azul no topo. É o
+    // que separa "janela escura" de "sala escura" — o holograma e as bolhas
+    // ganham um fundo que não compete com eles.
+    Rectangle {
+        anchors.fill: parent
+        z: -2
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#0a1020" }
+            GradientStop { position: 0.45; color: "#06090f" }
+            GradientStop { position: 1.0; color: "#04060a" }
+        }
+    }
+
+    // Halo do acento atrás do cabeçalho — some rápido, só marca o topo.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: 220
+        z: -1
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.alpha(Theme.accent, 0.07) }
+            GradientStop { position: 1.0; color: "transparent" }
+        }
+    }
 
     // Agente dono do holograma (Jorginho, o Tech Lead).
     readonly property var hologramAgent: {
@@ -109,14 +135,14 @@ Rectangle {
                 // Pílula de status (verde "equipe pronta" / vermelho offline).
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
-                    height: 24
-                    width: pillRow.implicitWidth + 20
-                    radius: 12
-                    color: root.store.online ? Qt.alpha(Theme.success, 0.15)
-                                             : Qt.alpha(Theme.danger, 0.15)
+                    height: 26
+                    width: pillRow.implicitWidth + 22
+                    radius: Theme.radiusPill
+                    color: root.store.online ? Qt.alpha(Theme.success, 0.12)
+                                             : Qt.alpha(Theme.danger, 0.12)
                     border.width: 1
-                    border.color: root.store.online ? Qt.alpha(Theme.success, 0.5)
-                                                     : Qt.alpha(Theme.danger, 0.5)
+                    border.color: root.store.online ? Qt.alpha(Theme.success, 0.45)
+                                                     : Qt.alpha(Theme.danger, 0.45)
 
                     Row {
                         id: pillRow
@@ -124,11 +150,18 @@ Rectangle {
                         spacing: 6
 
                         Rectangle {
-                            width: 8
-                            height: 8
-                            radius: 4
+                            width: 7
+                            height: 7
+                            radius: 3.5
                             anchors.verticalCenter: parent.verticalCenter
                             color: root.store.online ? Theme.success : Theme.danger
+
+                            SequentialAnimation on opacity {
+                                running: root.store.online && root.store.activeTasks > 0
+                                loops: Animation.Infinite
+                                NumberAnimation { from: 1.0; to: 0.3; duration: 700 }
+                                NumberAnimation { from: 0.3; to: 1.0; duration: 700 }
+                            }
                         }
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
@@ -178,7 +211,12 @@ Rectangle {
         Rectangle {
             width: parent.width
             height: 1
-            color: Theme.border
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 0.5; color: Theme.borderStrong }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
         }
 
         // ------------------------------------------------------------------
@@ -199,17 +237,39 @@ Rectangle {
                 height: parent.height
                 spacing: Theme.spacing
 
-                Text {
-                    text: "Equipe"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSizeLarge
-                    font.bold: true
+                Item {
+                    width: parent.width
+                    height: 22
+
+                    Text {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "EQUIPE"
+                        color: Theme.textDisabled
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeTiny
+                        font.bold: true
+                        font.letterSpacing: 1.4
+                    }
+
+                    Text {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: {
+                            let n = 0;
+                            for (const a of (root.store.agents ?? []))
+                                if (a.enabled) n += 1;
+                            return n + (n === 1 ? " agente" : " agentes");
+                        }
+                        color: Theme.textDisabled
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeTiny
+                    }
                 }
 
                 Flickable {
                     width: parent.width
-                    height: parent.height - 30
+                    height: parent.height - 22 - Theme.spacing
                            - (hologramBlock.visible ? hologramBlock.height + Theme.spacing : 0)
                     clip: true
                     contentWidth: width
@@ -490,7 +550,7 @@ Rectangle {
                     showLabel: false
                     showTaskTabs: true
                     showFlow: true
-                    listHeight: centerCol.height - stage.height - 12 - 46 - 12
+                    listHeight: centerCol.height - stage.height - centerCol.spacing
                 }
             }
         }

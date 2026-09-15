@@ -128,6 +128,24 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_usage_provider ON usage_records(provider_id);
     "#,
+    // v2 — histórico da conversa com o usuário
+    //
+    // O chat precisa de memória de curto prazo: sem isto cada mensagem chegava
+    // ao modelo sozinha, sem o que foi dito antes, e a resposta saía no vácuo
+    // ("👍" pra um "obrigado por assistir"). Aqui ficam só os turnos VISÍVEIS
+    // ao usuário — o que ele escreveu e a resposta final consolidada. Os passos
+    // internos entre agentes continuam em `messages`, que é outra coisa.
+    r#"
+    CREATE TABLE conversation (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT,
+        role TEXT NOT NULL,
+        agent_name TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_conversation_created ON conversation(created_at);
+    "#,
 ];
 
 pub fn apply(conn: &Connection) -> rusqlite::Result<()> {
