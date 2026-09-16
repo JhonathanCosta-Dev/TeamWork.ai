@@ -127,6 +127,64 @@ leitura; máximo de conexões; validação de todas as mensagens; nenhuma execu�
 de shell a partir de entrada do usuário ou de saída de modelo; chaves nunca
 saem do daemon; logs com redaction.
 
+## Controle de janelas por gesto
+
+Três camadas, cada uma testável por si:
+
+```
+                                                     ┌─► niri msg action
+face_tracker.py ──► gestures.py ──► WindowGestures.qml┤   (gestos discretos)
+ (webcam,          (geometria e      (mapeamento e    └─► pointer.py
+  MediaPipe)        máquina de        execução)            (Super + arrastar,
+                    estados)                                via /dev/uinput)
+```
+
+O `face_tracker.py` já rodava o HandLandmarker para detectar aceno; o mesmo
+resultado por quadro agora alimenta o `gestures.py`, que não sabe nada de
+câmera — recebe posição e pose e devolve eventos (`arm`, `swipe_*`,
+`fist_hold`). Essa fronteira é o que torna o reconhecedor testável com
+trajetórias sintéticas (`test_gestures.py`), sem webcam.
+
+Do lado do QML, o `FaceTrackService` só transporta (`GESTURE <json>` → sinal no
+store) e o `WindowGestures` decide o que cada gesto faz. Um `Process` por vez,
+com fila: dois gestos seguidos precisam virar dois comandos, e reaproveitar o
+Process sem esperar o anterior descartava o primeiro.
+
+O arrasto é a exceção ao "uma ação por gesto": ele é contínuo. O niri não expõe
+o arrasto interativo por IPC, então o caminho é falar a língua do compositor —
+um ponteiro virtual (`pointer.py`) pressiona Super + botão e move o cursor, e o
+niri faz o arrasto que já sabe fazer. A alternativa (calcular a posição da
+janela e teleportá-la) esbarra na aceleração de ponteiro, que torna "andar N
+unidades" ≠ "andar N pixels".
+
+Nenhuma ação destrutiva é acessível por gesto: o vocabulário inteiro é
+desfazível.
+
+## Custo do rastreamento por webcam
+
+O `face_tracker.py` roda dois modelos de visão e um de identidade no mesmo
+laço, e chegou a consumir 558% de CPU (medido) — cinco núcleos e meio. O que
+segurou isso, em ordem de impacto:
+
+- **`grab()` separado de `retrieve()`.** `cap.read()` captura E decodifica; o
+  limitador descartava dois de cada três quadros DEPOIS de decodificá-los.
+- **Teto de núcleos por afinidade.** As variáveis `*_NUM_THREADS` só valem
+  para bibliotecas com OpenMP; o onnxruntime atual usa thread pool próprio e
+  as ignora (gastava 600 ms de CPU em 104 ms de relógio). `sched_setaffinity`
+  é o único teto que todas respeitam, porque quem aplica é o kernel.
+- **Taxa que acompanha o uso.** Baratear o quadro sem baixar o teto de
+  quadros por segundo faz o laço rodar mais vezes e gastar a economia de
+  volta — medido: os dois modos davam exatamente o mesmo consumo até o
+  `PROCESS_HZ` passar a variar junto.
+- **Cada modelo só quando alguém usa o resultado.** O de mãos não roda sem
+  gestos nem aceno ligados; o facial cai para um quarto dos quadros quando o
+  avatar 3D não está na tela (ele só existe em tela cheia e no copiloto).
+- **Identidade a cada 12 s**, não a cada 3: cada checagem custa ~600 ms de CPU
+  e ninguém troca de pessoa na frente da câmera nesse ritmo.
+
+Resultado: 104% em uso pesado (tela cheia, avatar animado e gestos ativos) e
+78% em uso leve.
+
 ## Suposições documentadas
 
 - O usuário roda Quickshell ≥ 0.1 com Qt 6 em Wayland (Niri/CachyOS alvo).

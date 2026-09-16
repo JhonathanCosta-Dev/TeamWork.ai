@@ -2120,15 +2120,25 @@ impl Orchestrator {
     ) -> String {
         let mut sections: Vec<&SubtaskOutcome> = outcomes.values().collect();
         sections.sort_by(|a, b| a.title.cmp(&b.title));
+
+        // Um agente só respondeu: a resposta dele É a resposta. O cabeçalho
+        // "## <título> — <agente>" só fazia sentido quando havia várias
+        // seções para separar; com uma, ele repetia o nome que a interface já
+        // mostra e ecoava a própria pergunta do usuário no título — um
+        // "## Jorginho: e aí, tudo bem? — Jorginho" antes de um "tudo ótimo".
+        if sections.len() < 2 {
+            return sections
+                .first()
+                .map(|o| o.content.clone())
+                .unwrap_or_default();
+        }
+
+        // Com várias seções, o cabeçalho é o que diz quem escreveu o quê.
         let fallback = sections
             .iter()
             .map(|o| format!("## {} — {}\n\n{}", o.title, o.agent_name, o.content))
             .collect::<Vec<_>>()
             .join("\n\n");
-
-        if sections.len() < 2 {
-            return fallback;
-        }
 
         let coordinator = {
             let agents = self.agents.read().await;

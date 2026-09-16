@@ -955,3 +955,32 @@ async fn the_previous_turns_reach_the_model_as_chat_messages() {
     let system = calls[1].iter().find(|m| m.role == Role::System).unwrap();
     assert!(system.content.contains("Conversa em andamento"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn single_agent_reply_has_no_section_header() {
+    // A resposta de um agente só vai pro chat como ela é. O cabeçalho
+    // "## <título> — <agente>" repetia o nome que a interface já mostra e
+    // ecoava a pergunta do usuário no título, antes da resposta de verdade.
+    let orch = make_orchestrator(OrchestratorConfig::fast_for_tests()).await;
+    let mut rx = orch.subscribe();
+    let forge = orch.find_agent("forge").await.unwrap();
+
+    orch.submit("e aí, tudo certo?", &[forge.id.to_string()])
+        .await
+        .unwrap();
+    let seen = collect_until(&mut rx, |e| e.event == events::RUN_COMPLETED).await;
+
+    let summary = seen
+        .last()
+        .unwrap()
+        .payload
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap();
+    assert!(
+        !summary.starts_with("##"),
+        "resposta de agente único não leva cabeçalho de seção: {summary:?}"
+    );
+    assert!(!summary.contains("— Forge"), "nem assinatura duplicada");
+    assert!(summary.contains("simulado"), "mas o conteúdo continua lá");
+}

@@ -55,6 +55,10 @@ SAMPLE_RATE = 16000
 FRAME_SAMPLES = 1024                     # 64 ms — granularidade do VAD
 FRAME_BYTES = FRAME_SAMPLES * 2
 FRAME_SECS = FRAME_SAMPLES / SAMPLE_RATE
+# Quanto tempo o reconhecedor de vocabulário aberto continua rodando depois do
+# último quadro com fala. Cobre a pausa natural no meio de uma frase sem
+# deixá-lo ligado no silêncio.
+FREE_TAIL_SECS = 1.5
 
 # Formas do nome que o modelo pequeno realmente produz ao ouvir "jorginho".
 NAME_FORMS = ("jorginho", "jorjinho", "jorgim", "jorgin", "jorgi", "jorge",
@@ -63,6 +67,25 @@ NAME_FORMS = ("jorginho", "jorjinho", "jorgim", "jorgin", "jorgi", "jorge",
 # não pode custar a ativação), mas no caminho LIVRE elas autorizam uma frase
 # mais longa a acordar — sem isso, "jorge" no meio de uma conversa dispararia.
 TRIGGER_WORDS = {"fala", "fale", "falar", "ei", "oi", "olá", "ola", "hey", "ô", "o"}
+# Chamamentos que valem COLADOS ao nome. "o"/"ô" ficam de fora de propósito:
+# o Vosk escreve os dois como "o", e aí "conhece O Jorginho" (artigo) viraria
+# uma chamada. O mesmo vale para o caso real "acompanhe O curso em www
+# JORGINHO com br", que passava quando bastava um gatilho em qualquer lugar da
+# frase.
+CALL_WORDS = {"fala", "fale", "falar", "ei", "oi", "olá", "ola", "hey"}
+# Ligação tolerada entre o chamamento e o nome: "fala COM jorginho".
+CALL_LINKS = {"com", "pro", "pra", "para", "ao", "o"}
+
+# Exigir o chamamento ("fala Jorginho") em vez de aceitar o nome sozinho.
+#
+# O nome sozinho bastava, e qualquer áudio que dissesse "Jorginho" acordava a
+# escuta: um vídeo tocando no alto-falante virou uma conversa inteira de
+# mensagens sem sentido ("Acompanhe o curso em…", "ative o sininho…"), porque
+# o vídeo falava do próprio Jorginho.
+#
+# O preço, assumido: o Vosk às vezes come a primeira palavra, e aí a ativação
+# se perde e você repete. Para voltar ao comportamento antigo, ponha False.
+REQUIRE_TRIGGER = True
 # Candidatas da gramática. Só palavras que o modelo pt-BR pequeno tem no
 # léxico — "jorginho" e "jorge" ele conhece; apelidos inventados (jorgim,
 # jorgin…) não, e o vosk simplesmente IGNORA a palavra ausente, deixando a
@@ -71,8 +94,10 @@ TRIGGER_WORDS = {"fala", "fale", "falar", "ei", "oi", "olá", "ola", "hey", "ô"
 WAKE_CANDIDATES = [
     "fala jorginho", "fala jorge", "fala com jorginho", "fala com jorge",
     "fale jorginho", "ei jorginho", "ei jorge", "oi jorginho", "oi jorge",
-    "jorginho", "jorge",
 ]
+if not REQUIRE_TRIGGER:
+    # Sem chamamento obrigatório, o nome sozinho volta a ser alvo válido.
+    WAKE_CANDIDATES += ["jorginho", "jorge"]
 
 # --- captura do comando -------------------------------------------------
 PREROLL_SECS = 0.35        # áudio antes do início da fala (não corta sílaba)
@@ -198,14 +223,38 @@ def _tokens(rec_json: str):
     return [t for t in text.split() if t and t != "[unk]"]
 
 
+def called_by_name(tokens) -> bool:
+    """Alguém CHAMOU o Jorginho, em vez de só falar dele?
+
+    O chamamento tem de vir junto do nome ("fala jorginho", "fala com
+    jorginho"). Aceitar o gatilho em qualquer posição da frase é frouxo
+    demais em português, onde "o", "oi" e "ei" aparecem o tempo todo.
+    """
+    for i, token in enumerate(tokens):
+        if not name_like(token):
+            continue
+        if i >= 1 and tokens[i - 1] in CALL_WORDS:
+            return True
+        if (i >= 2 and tokens[i - 1] in CALL_LINKS
+                and tokens[i - 2] in CALL_WORDS):
+            return True
+    return False
+
+
 def is_wake_grammar(rec_json: str) -> bool:
-    """Gramática restrita: o nome já é prova suficiente.
+    """Gramática restrita: nome + chamamento (ver REQUIRE_TRIGGER).
 
     Só frases de ativação (e [unk]) existem nessa gramática, então o nome
-    aparecer significa que uma delas casou — não exigir o "fala" evita perder
-    a ativação quando o vosk come a primeira palavra.
+    aparecer já indica que uma delas casou. Isso bastava — e era a brecha por
+    onde um vídeo falando "Jorginho" acordava a escuta e mandava a frase
+    seguinte como se fosse sua.
     """
-    return any(name_like(t) for t in _tokens(rec_json))
+    tokens = _tokens(rec_json)
+    if not any(name_like(t) for t in tokens):
+        return False
+    if not REQUIRE_TRIGGER:
+        return True
+    return called_by_name(tokens)
 
 
 def is_wake_free(rec_json: str) -> bool:
@@ -217,6 +266,11 @@ def is_wake_free(rec_json: str) -> bool:
     tokens = _tokens(rec_json)
     if not any(name_like(t) for t in tokens):
         return False
+    if called_by_name(tokens):
+        return True
+    if REQUIRE_TRIGGER:
+        return False
+    # Sem chamamento obrigatório, o gatilho solto e a fala curta voltam a valer.
     return any(t in TRIGGER_WORDS for t in tokens) or len(tokens) <= 2
 
 
@@ -588,6 +642,9 @@ def main() -> None:
         vigil.SetWords(False)
         free = KaldiRecognizer(model, SAMPLE_RATE)
         free.SetWords(False)
+        # O caminho livre só roda perto da fala (ver o laço abaixo).
+        free_cold = True
+        last_speech = -999.0
         preroll = []
         woke = False
         clapped = False
@@ -600,7 +657,9 @@ def main() -> None:
             audio_clock += FRAME_SECS
             level = rms(chunk)
             floor_now = vad.floor
-            vad.feed(level)                     # piso de ruído sempre atual
+            speech = vad.feed(level)            # piso de ruído sempre atual
+            if speech:
+                last_speech = audio_clock
             # Duas palmas: chamado sem falar nada. Sai da vigília na hora — o
             # widget cumprimenta e passa a ouvir, sem esperar frase nenhuma.
             if claps.feed(chunk, level, floor_now, audio_clock):
@@ -616,10 +675,28 @@ def main() -> None:
             if not woke:
                 # Caminho livre: salva a ativação quando o léxico do modelo
                 # não representa o apelido e a gramática nunca casa.
-                if free.AcceptWaveform(chunk):
-                    woke = is_wake_free(free.Result())
-                else:
-                    woke = is_wake_free(free.PartialResult())
+                #
+                # Ele é um decodificador de vocabulário ABERTO — de longe a
+                # parte mais cara do processo — e em silêncio não há palavra
+                # nenhuma para reconhecer. Então só roda perto da fala.
+                # O preroll cobre o começo: ao sair do silêncio, o áudio dos
+                # últimos instantes entra antes do quadro atual, senão a
+                # primeira sílaba do "fala Jorginho" se perderia.
+                near_speech = audio_clock - last_speech < FREE_TAIL_SECS
+                if near_speech:
+                    if free_cold:
+                        free_cold = False
+                        for past in preroll[:-1]:
+                            free.AcceptWaveform(past)
+                    if free.AcceptWaveform(chunk):
+                        woke = is_wake_free(free.Result())
+                    else:
+                        woke = is_wake_free(free.PartialResult())
+                elif not free_cold:
+                    # Silêncio prolongado: zera o decodificador para ele não
+                    # guardar meia frase antiga e voltar frio da próxima vez.
+                    free.Reset()
+                    free_cold = True
 
         # Palma não grava comando aqui: o widget cumprimenta ("mandou me
         # chamar?") e só depois abre a escuta — senão a gravação começaria

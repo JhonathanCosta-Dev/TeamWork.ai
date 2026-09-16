@@ -75,10 +75,18 @@ Item {
     }
 
     // Reconexão sem polling agressivo.
+    //
+    // O `false` antes do `true` não é supérfluo: atribuir `true` ao que já
+    // está `true` não reabre nada, e o widget aberto ANTES do daemon ficava
+    // desconectado para sempre — sem agentes, sem chat, sem aviso além de um
+    // socket error na primeira linha do log.
     Timer {
         interval: 3000
         repeat: true
         running: !socket.connected
-        onTriggered: socket.connected = true
+        onTriggered: {
+            socket.connected = false;
+            socket.connected = true;
+        }
     }
 }

@@ -38,6 +38,51 @@ Item {
     property string faceStatus: ""
     property int faceOwner: -1              // 1 dono, 0 outro, -1 sem/indefinido
 
+    // ------------------------------------------------------------------
+    // Controle de janelas por gesto (ver services/WindowGestures.qml)
+    // ------------------------------------------------------------------
+    // Opt-in, como a câmera: mexer nas janelas do usuário sem ele ter pedido
+    // seria o tipo de "ajuda" que ninguém quer. Depende da câmera ligada.
+    property bool gesturesEnabled: false
+    // Mão reconhecida e no comando. Só nesse estado um gesto vira ação — é o
+    // que separa gesticular de comandar.
+    property bool gestureArmed: false
+    // Último gesto executado, para o aviso passageiro na tela.
+    property string lastGesture: ""
+    // Espelho da mão (Config → Controle por gesto): mostra o quadro da webcam
+    // com o esqueleto detectado enquanto você gesticula. Opt-in dentro de um
+    // opt-in — só faz sentido com o controle por gesto ligado, e custa um
+    // JPEG por quadro enquanto há mão no quadro.
+    property bool gesturePreview: false
+    // Acenar pra webcam faz o Jorginho aparecer e passar a ouvir. Ligado por
+    // padrão (é o comportamento que já existia), mas desligável: com a câmera
+    // ativa o dia todo, um gesto qualquer na frente dela pode trazer o
+    // Jorginho pra tela no meio de outra coisa.
+    property bool waveGreetEnabled: true
+    // Últimos pontos da mão (21 pares [x,y] normalizados) e o quadro que os
+    // acompanha. `handFrameSeq` é o que faz a imagem recarregar.
+    property var handPoints: []
+    property string handPose: ""
+    property string handFrame: ""
+    property int handFrameSeq: 0
+    // Há mão no quadro agora? Cai sozinho quando ela sai (ver handTimeout).
+    property bool handVisible: false
+
+    // Arrastando uma janela agora (mão fechada). Estado, não evento: a
+    // interface mostra isso enquanto durar.
+    property bool dragging: false
+    // Movendo só o cursor (mão de ponteiro), sem pegar janela nenhuma.
+    property bool pointing: false
+    // Polegar fechado: botão do mouse pressionado (clicar / segurar o clique).
+    property bool clicking: false
+
+    signal gestureDetected(string name, string pose)
+    /// Movimento contínuo da mão, em fração do quadro desde o último aviso.
+    /// Separado de `gestureDetected` porque é contínuo e carrega números.
+    /// Serve ao arrasto (mão fechada) e ao ponteiro livre (dois dedos) — quem
+    /// sabe a diferença é o estado, não o sinal.
+    signal handDrag(real dx, real dy)
+
     // Emitido quando o usuário pede pra cadastrar o rosto (o FaceTrackService
     // escuta e manda ENROLL pro tracker).
     signal enrollFaceRequested()
@@ -234,6 +279,9 @@ Item {
                 if (v.speakReplies !== undefined) root.speakReplies = v.speakReplies;
                 if (v.cameraEnabled !== undefined) root.cameraEnabled = v.cameraEnabled;
                 if (v.puppetMode !== undefined) root.puppetMode = v.puppetMode;
+                if (v.gesturesEnabled !== undefined) root.gesturesEnabled = v.gesturesEnabled;
+                if (v.gesturePreview !== undefined) root.gesturePreview = v.gesturePreview;
+                if (v.waveGreetEnabled !== undefined) root.waveGreetEnabled = v.waveGreetEnabled;
             }
         });
     }
@@ -251,7 +299,10 @@ Item {
                 hologramCycle: root.hologramCycle,
                 speakReplies: root.speakReplies,
                 cameraEnabled: root.cameraEnabled,
-                puppetMode: root.puppetMode
+                puppetMode: root.puppetMode,
+                gesturesEnabled: root.gesturesEnabled,
+                gesturePreview: root.gesturePreview,
+                waveGreetEnabled: root.waveGreetEnabled
             }
         }, null);
     }
@@ -640,6 +691,25 @@ Item {
                         out.push(m.id);
         }
         return out;
+    }
+
+    Timer {
+        id: handTimeout
+        interval: 700
+        onTriggered: {
+            root.handVisible = false;
+            root.handPoints = [];
+            root.handPose = "";
+        }
+    }
+
+    function updateHand(points, pose, frame, seq) {
+        root.handPoints = points;
+        root.handPose = pose;
+        root.handFrame = frame;
+        root.handFrameSeq = seq;
+        root.handVisible = true;
+        handTimeout.restart();
     }
 
     Connections {

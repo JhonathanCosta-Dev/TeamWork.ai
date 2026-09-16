@@ -78,6 +78,48 @@ comandos do sistema**. Se algum dia for adicionado, exigirá: confirmação
 explícita por ação, allowlist de comandos, sandbox, registro em `events`,
 timeout e cancelamento — nesta ordem, e desabilitado por padrão.
 
+## Controle de janelas por gesto (webcam)
+
+O widget pode executar ações do compositor (`niri msg action`) a partir de
+gestos de mão vistos pela webcam. É a única funcionalidade em que um evento da
+câmera vira um comando no sistema, então vale a pena ser explícito sobre o que
+segura isso:
+
+- **Opt-in duplo.** Depende da câmera ligada (que já é opt-in) *e* de
+  `Controle por gesto` ativado. Desligado de fábrica; a preferência fica em
+  `widget.ui`, como as demais.
+- **Estado armado.** Um gesto só vira ação depois de a mão aberta ficar parada
+  por 1 s, e o estado cai sozinho após 3 s sem gesto. É o que impede que
+  gesticular numa conversa mexa nas janelas.
+- **Identidade.** Um rosto reconhecido como *não sendo o dono* (`owner 0`) não
+  comanda nada. Sem reconhecimento cadastrado, o controle segue funcionando —
+  a trava vale para o caso em que o app sabe que é outra pessoa.
+- **Nada irreversível.** Fechar janela não é um gesto: os comandos disponíveis
+  navegam, redimensionam e movem — todos desfazíveis. Um falso positivo custa
+  um susto, não trabalho perdido.
+- **Conjunto fechado de ações.** O mapeamento gesto→ação é uma tabela fixa no
+  QML (`services/WindowGestures.qml`) com ações nomeadas do niri. Não há
+  caminho de "gesto vira comando arbitrário": nada vindo da câmera, do modelo
+  ou de um provedor escolhe o que executar.
+- **Ponteiro virtual (arrasto e cursor).** O arrasto e o ponteiro livre criam
+  um dispositivo de entrada em `/dev/uinput` que move o cursor e, só no
+  arrasto, pressiona Super + botão esquerdo; com a mão de ponteiro, o polegar
+  fechado pressiona o botão SEM o Super (clique comum). Movendo o cursor com o
+  polegar aberto, nenhum botão é emitido. É um
+  dispositivo de saída apenas: nunca LÊ entrada (não seria possível — ler
+  `/dev/input/event*` exige o grupo `input`, que o app não tem e não pede), e
+  emite só esses três eventos. Sobe junto com o controle por gesto e morre com
+  ele; ao morrer, solta o botão e o modificador, para nenhuma falha deixar a
+  janela grudada no ponteiro ou o Super travado.
+- **Frames não saem da máquina.** O Python emite apenas o nome do gesto e a
+  pose; nenhuma imagem é gravada ou transmitida — o mesmo compromisso do
+  rastreamento facial.
+- **Espelho da mão (opt-in dentro do opt-in).** Com ele ligado, e só enquanto
+  há mão no quadro, um JPEG reduzido (320 px) é escrito em
+  `$XDG_RUNTIME_DIR/teamwork-ai/` — tmpfs, em memória, descartado no fim da
+  sessão. É sobrescrito a cada quadro, nunca vai para o disco e nunca sai da
+  máquina; desligada a opção, nenhuma imagem passa a existir.
+
 ## Ameaças conhecidas e limites
 
 - Qualquer processo do MESMO usuário pode falar com o socket (modelo de
@@ -87,3 +129,7 @@ timeout e cancelamento — nesta ordem, e desabilitado por padrão.
   conteúdo nunca é executado.
 - O SQLite não é cifrado; não armazene dados sensíveis nas tarefas se o disco
   não for cifrado.
+- Com o controle por gesto ligado, quem estiver na frente da câmera pode
+  navegar entre janelas (não fechar, que pede confirmação). Sem rosto
+  cadastrado o app não distingue quem é — cadastre o seu rosto se isso
+  importar no seu ambiente.

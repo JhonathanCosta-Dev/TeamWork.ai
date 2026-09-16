@@ -8,6 +8,14 @@ NUNCA são gravados nem enviados a lugar nenhum (privacidade: 100% local).
 
 Protocolo:
   stdin   "ENROLL"                cadastra o rosto atual como dono (salva embedding local)
+          "HANDS ON|OFF"          liga/desliga a detecção de mãos (gestos e aceno).
+                                  Desligada, o segundo modelo nem roda — é a
+                                  maior economia de CPU do processo.
+          "FACE FULL|LOW"         ritmo do rastreamento facial: FULL anima o
+                                  avatar; LOW só confere presença/identidade
+                                  (1 quadro em cada 4), para quando o avatar
+                                  não está na tela
+          "PREVIEW ON|OFF"        liga/desliga o espelho da mão (quadro + pontos)
           "QUIT"                  encerra
   stdout  "READY"                 câmera + modelos prontos
           "FACE <json>"           rosto detectado (throttled ~12 Hz):
@@ -17,6 +25,18 @@ Protocolo:
                                      sim,       similaridade com o dono
                                      blend:{...} blendshapes mapeados p/ canais do avatar}
           "NOFACE"                nenhum rosto (throttled)
+          "STATS <json>"          a cada 5 s: {fps} quadros REALMENTE
+                                  processados por segundo (não a emissão) —
+                                  é a taxa que os limiares de gesto assumem —
+                                  e {hand: {open,fist,other}} quantos quadros
+                                  viram cada pose de mão no intervalo
+          "HAND <json>"           só com PREVIEW ON e mão no quadro:
+                                    {pts:[[x,y],…21], pose, frame, seq} —
+                                    `frame` é o caminho de um JPEG pequeno em
+                                    tmpfs, reescrito a cada quadro
+          "GESTURE <json>"        gesto de mão: {name, pose}
+                                    name: arm|disarm|swipe_left|swipe_right|
+                                          swipe_up|swipe_down|fist_hold
           "ENROLLED <sim>"        cadastro concluído
           "ERR <msg>"
 
@@ -24,12 +44,53 @@ Config por ambiente:
   TEAMWORK_FACE_CAMERA   índice da câmera (padrão 0)
   TEAMWORK_FACE_MODEL    caminho do face_landmarker.task
   TEAMWORK_FACE_DIR      pasta de dados (owner.npy)
+  TEAMWORK_GESTURE_MIRROR  1 (padrão) espelha o eixo X dos gestos
 """
 import json
 import os
 import sys
 import threading
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gestures import HandGestures, classify_pose, thumb_ratio  # noqa: E402
+
+# Teto de threads das bibliotecas de visão. Precisa vir ANTES do import de
+# cv2/mediapipe/onnxruntime: as três leem isto na inicialização e, sem teto,
+# cada uma abre uma thread por núcleo — com dois modelos no mesmo laço, a
+# máquina passa mais tempo sincronizando do que calculando.
+_THREADS = os.environ.get("TEAMWORK_FACE_THREADS", "2")
+for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+             "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_var, _THREADS)
+
+
+def _limit_cores():
+    """Prende o processo a poucos núcleos.
+
+    As variáveis acima só valem para quem foi compilado com OpenMP — o
+    onnxruntime das versões atuais usa thread pool próprio e as ignora
+    solenemente: medido, ele gastava 600 ms de CPU em 104 ms de relógio, ou
+    seja, seis núcleos de uma vez. A afinidade é o único teto que TODAS as
+    bibliotecas respeitam, porque quem aplica é o kernel.
+
+    O rastreamento é um serviço de fundo: ele não pode competir de igual para
+    igual com o que você está fazendo na máquina.
+    """
+    try:
+        disponiveis = len(os.sched_getaffinity(0))
+    except AttributeError:
+        return
+    pedido = os.environ.get("TEAMWORK_FACE_CORES")
+    alvo = int(pedido) if pedido else max(2, disponiveis // 4)
+    alvo = max(1, min(alvo, disponiveis))
+    try:
+        os.sched_setaffinity(0, set(sorted(os.sched_getaffinity(0))[:alvo]))
+    except OSError:
+        pass
+
+
+_limit_cores()
 
 BASE = os.environ.get(
     "TEAMWORK_FACE_DIR",
@@ -39,9 +100,33 @@ BASE = os.environ.get(
 MODEL = os.environ.get("TEAMWORK_FACE_MODEL", os.path.join(BASE, "face_landmarker.task"))
 CAMERA = int(os.environ.get("TEAMWORK_FACE_CAMERA", "0"))
 OWNER_PATH = os.path.join(BASE, "owner.npy")
+# Espelho da mão: um JPEG pequeno em tmpfs (nunca em disco), reescrito a cada
+# quadro enquanto o preview está ligado. Some com o fim da sessão, como todo o
+# resto em /run — a imagem não é guardada em lugar nenhum.
+_RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+PREVIEW_PATH = os.path.join(_RUNTIME, "teamwork-ai", "handcam.jpg")
+PREVIEW_WIDTH = 320       # o bastante pra enxergar a mão; barato de encodar
 EMIT_HZ = 12.0            # taxa máxima de emissão FACE
-PROCESS_HZ = 15.0         # processa ~15 fps (a câmera entrega ~30) — poupa CPU
-RECOG_EVERY = 3.0         # segundos entre checagens de identidade (é caro)
+# Quadros processados por segundo. É um TETO, e o teto importa: baratear o
+# quadro sem baixá-lo faz o laço apenas rodar mais vezes e gastar a economia
+# de volta — medido, os dois modos davam exatamente o mesmo consumo.
+#
+# 12 Hz anima o avatar de forma fluida e sustenta os gestos; 5 Hz basta para
+# saber que você está aí, que é você, e para o aceno.
+PROCESS_HZ = 12.0
+PROCESS_HZ_LOW = 5.0
+# Segundos entre checagens de identidade. Cada uma custa ~600 ms de CPU
+# (medido), então a frequência é o que decide o peso dela: a 3 s era o segundo
+# maior gasto do processo, e ninguém troca de pessoa na frente da câmera nesse
+# ritmo. A primeira checagem continua imediata — só as repetições espaçam.
+RECOG_EVERY = 12.0
+# Teto para o adiamento acima: com a mão no quadro a identidade espera, mas
+# não para sempre — senão alguém entraria em cena de mão levantada e herdaria
+# o "dono" de quem estava antes (ver a trava em WindowGestures.qml).
+RECOG_MAX_DEFER = 10.0
+# A webcam te vê de frente: sem espelhar, mover a mão pra sua direita mandaria
+# o comando pra esquerda.
+GESTURE_MIRROR = os.environ.get("TEAMWORK_GESTURE_MIRROR", "1") != "0"
 
 
 def out(msg):
@@ -90,8 +175,38 @@ def head_pose(matrix):
     return max(-1.0, min(1.0, yaw / 0.8)), max(-1.0, min(1.0, pitch / 0.8))
 
 
+def save_preview_frame(cv2, frame, path, width=PREVIEW_WIDTH):
+    """Grava o quadro do espelho da mão, pequeno e espelhado. True se gravou.
+
+    Espelhado porque você se vê como num espelho: sem isso, mover a mão para a
+    direita aparece indo para a esquerda e atrapalha mais do que ajuda.
+
+    A troca é atômica (arquivo temporário + rename): a interface lê esse
+    caminho a cada quadro e, sem isso, pegaria JPEG pela metade.
+    """
+    h, w = frame.shape[:2]
+    if w == 0 or h == 0:
+        return False
+    scale = width / float(w)
+    small = cv2.resize(frame, (width, max(1, int(h * scale))))
+    small = cv2.flip(small, 1)
+    # imencode em vez de imwrite: o OpenCV decide o formato pela EXTENSÃO do
+    # arquivo, e o temporário termina em ".tmp" — ele não reconhecia e falhava
+    # com "could not find a writer", silenciosamente, a cada quadro.
+    ok, buf = cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+    if not ok:
+        return False
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(buf.tobytes())
+    os.replace(tmp, path)
+    return True
+
+
 # Leitura de comandos do stdin numa thread (não bloqueia a captura).
-_cmd = {"enroll": False, "quit": False}
+_cmd = {"enroll": False, "quit": False, "preview": False, "hands": True,
+        "face_full": True}
 
 
 def _stdin_loop():
@@ -99,6 +214,18 @@ def _stdin_loop():
         c = line.strip().upper()
         if c == "ENROLL":
             _cmd["enroll"] = True
+        elif c == "FACE FULL":
+            _cmd["face_full"] = True
+        elif c == "FACE LOW":
+            _cmd["face_full"] = False
+        elif c == "HANDS ON":
+            _cmd["hands"] = True
+        elif c == "HANDS OFF":
+            _cmd["hands"] = False
+        elif c == "PREVIEW ON":
+            _cmd["preview"] = True
+        elif c == "PREVIEW OFF":
+            _cmd["preview"] = False
         elif c == "QUIT":
             _cmd["quit"] = True
             break
@@ -116,9 +243,17 @@ def main():
         out("ERR modelo face_landmarker.task ausente — rode setup-facetrack.sh")
         return
 
+    cv2.setNumThreads(int(os.environ.get("TEAMWORK_FACE_THREADS", "2")))
     cap = cv2.VideoCapture(CAMERA)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    # Não adianta a câmera entregar 30 quadros se só ~8 são processados: o
+    # resto é decodificação jogada fora. Nem toda webcam respeita, daí o
+    # descarte por `grab()` continuar valendo no laço.
+    cap.set(cv2.CAP_PROP_FPS, 15)
+    # Buffer curto: com fila, o quadro processado é o de um segundo atrás e o
+    # avatar responde atrasado.
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not cap.isOpened():
         out("ERR não consegui abrir a câmera %d" % CAMERA)
         return
@@ -156,7 +291,7 @@ def main():
     try:
         from insightface.app import FaceAnalysis
         recog = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-        recog.prepare(ctx_id=-1, det_size=(320, 320))
+        recog.prepare(ctx_id=-1, det_size=(224, 224))
         if os.path.exists(OWNER_PATH):
             owner_emb = np.load(OWNER_PATH)
         err("reconhecimento de identidade ativo")
@@ -173,63 +308,149 @@ def main():
     last_owner = -1
     last_sim = 0.0
     no_face_emitted = 0.0
+    gestures = HandGestures(mirror=GESTURE_MIRROR)
+    res = None                # último resultado facial (reusado em FACE LOW)
+    stats_t0 = time.time()
+    stats_frames = 0
+    stats_poses = {"open": 0, "fist": 0, "point": 0, "click": 0, "other": 0}
+    # Última medida do polegar (ver gestures.thumb_ratio) — é o número que se
+    # olha quando o clique dispara sozinho ou não dispara nunca.
+    stats_thumb = 0.0
+    preview_seq = 0
     wave_hist = []            # (t, x) do pulso da mão levantada
     last_wave = 0.0
     last_hand = 0.0
+    last_hand_seen = 0.0      # qualquer mão no quadro, em qualquer altura
     frame_i = 0
     last_process = 0.0
     WAVE_COOLDOWN = 6.0       # s entre acenos (não repetir a saudação)
+    # Depuração do gesto: um registro por quadro com mão no ar. Fica DESLIGADA
+    # por padrão — ligada, o arquivo cresce sem limite (o primeiro que rodou
+    # assim passou de 5 MB). Ligue com TEAMWORK_FACE_DEBUG=1 quando precisar
+    # calibrar limiares, e apague o arquivo depois.
     WAVE_DEBUG = os.path.join(BASE, "wave-debug.log")
+    DEBUG_GESTURES = os.environ.get("TEAMWORK_FACE_DEBUG", "0") == "1"
+
+    def dbg(text):
+        if not DEBUG_GESTURES:
+            return
+        try:
+            with open(WAVE_DEBUG, "a") as fh:
+                fh.write(text)
+        except Exception:
+            pass
 
     while not _cmd["quit"]:
-        ok, frame = cap.read()
-        if not ok:
+        # `grab()` só tira o quadro da fila; `retrieve()` é quem decodifica.
+        # Separar os dois é o que evita decodificar ~20 quadros por segundo
+        # para jogá-los fora logo em seguida.
+        if not cap.grab():
             time.sleep(0.05)
             continue
 
         now = time.time()
-        # Limita o processamento (a câmera entrega ~30 fps; consumimos o frame
-        # pra manter o buffer fresco, mas só processamos a ~PROCESS_HZ).
-        if now - last_process < 1.0 / PROCESS_HZ:
+        # Em modo econômico (avatar fora da tela e sem gestos), o laço inteiro
+        # desacelera — é o que transforma o trabalho poupado em CPU poupada.
+        alvo_hz = PROCESS_HZ if (_cmd["face_full"] or _cmd["hands"]) \
+            else PROCESS_HZ_LOW
+        if now - last_process < 1.0 / alvo_hz:
+            continue        # descartado sem decodificar
+        ok, frame = cap.retrieve()
+        if not ok:
             continue
         last_process = now
+        frame_i += 1
+        hand_sample = None      # vale só para ESTE quadro
+        hand_lms = None
+        stats_frames += 1
+        if now - stats_t0 >= 5.0:
+            out("STATS " + json.dumps(
+                {"fps": round(stats_frames / (now - stats_t0), 1),
+                 "hand": stats_poses,
+                 "thumb": round(stats_thumb, 2)},
+                separators=(",", ":")))
+            stats_t0 = now
+            stats_frames = 0
+            stats_poses = {"open": 0, "fist": 0, "point": 0,
+                           "click": 0, "other": 0}
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         ts = int((now - t0) * 1000)
-        try:
-            res = landmarker.detect_for_video(mp_image, ts)
-        except Exception:
+
+        # O rosto move o avatar — e o avatar só existe na tela cheia e no
+        # copiloto. Nos outros modos, animá-lo a 8 quadros por segundo é
+        # calcular expressão para ninguém ver: em LOW, um quarto dos quadros
+        # basta para saber que você está aí e que é você.
+        face_now = _cmd["face_full"] or frame_i % 4 == 0
+        if face_now:
+            try:
+                res = landmarker.detect_for_video(mp_image, ts)
+            except Exception:
+                continue
+        elif res is None:
             continue
 
-        # ---- detecção de ACENO (mão levantada oscilando na horizontal) ----
-        # Roda em frames alternados pra poupar CPU; aceno é um gesto lento.
-        # Roda a detecção de mão TODO frame processado (aceno precisa de
-        # amostragem — subamostrar perde a oscilação).
-        frame_i += 1
+        # ---- mãos: gestos de janela e aceno -------------------------------
+        # Com a mão à vista, roda em TODO quadro processado: tanto o aceno
+        # quanto o deslize precisam de amostragem, e subamostrar perde o
+        # movimento. Sem mão à vista, reveza (ver abaixo).
         if frame_i % 45 == 0:                       # heartbeat (loop vivo)
-            try:
-                with open(WAVE_DEBUG, "a") as f:
-                    f.write("alive f=%d hist=%d\n" % (frame_i, len(wave_hist)))
-            except Exception:
-                pass
-        if hand_landmarker is not None:
+            dbg("alive f=%d hist=%d\n" % (frame_i, len(wave_hist)))
+        # Sem mão à vista há um tempo, revezar: metade do custo do segundo
+        # modelo, e o pior caso ao levantar a mão é um quadro de atraso
+        # (~0,13 s), que ninguém percebe.
+        hands_idle = now - last_hand_seen > 3.0
+        hands_now = _cmd["hands"] and (not hands_idle or frame_i % 2 == 0)
+        if hand_landmarker is not None and hands_now:
             try:
                 hres = hand_landmarker.detect_for_video(mp_image, ts)
             except Exception as he:
                 hres = None
+                dbg("HANDERR %s\n" % str(he)[:80])
+            # Gestos de janela: a mesma detecção de mão que serve ao aceno
+            # alimenta o reconhecedor (ver gestures.py). Custo zero a mais —
+            # o HandLandmarker já rodou neste quadro.
+            if hres is not None and hres.hand_landmarks:
+                hand_lms = hres.hand_landmarks[0]
+                hand_sample = {
+                    "x": hand_lms[0].x,
+                    "y": hand_lms[0].y,
+                    "pose": classify_pose(hand_lms),
+                }
+            if hand_sample is not None:
+                last_hand_seen = now
+                stats_poses[hand_sample["pose"]] = \
+                    stats_poses.get(hand_sample["pose"], 0) + 1
+                stats_thumb = thumb_ratio(hand_lms)
+
+            # Espelho da mão (opt-in): o quadro vai pra tmpfs e os 21 pontos
+            # pelo stdout — quem desenha o esqueleto é a interface, que tem o
+            # tema e o antialiasing. Aqui só se paga o JPEG, e só enquanto há
+            # mão no quadro.
+            if _cmd["preview"] and hand_sample is not None:
                 try:
-                    with open(WAVE_DEBUG, "a") as f:
-                        f.write("HANDERR %s\n" % str(he)[:80])
-                except Exception:
-                    pass
+                    if save_preview_frame(cv2, frame, PREVIEW_PATH):
+                        preview_seq += 1
+                        out("HAND " + json.dumps({
+                            # x espelhado junto com a imagem, pra os pontos
+                            # caírem em cima da mão certa.
+                            "pts": [[round(1.0 - p.x, 4), round(p.y, 4)]
+                                    for p in hand_lms],
+                            "pose": hand_sample["pose"],
+                            "frame": PREVIEW_PATH,
+                            "seq": preview_seq,
+                        }, separators=(",", ":")))
+                except Exception as e:  # noqa: BLE001
+                    dbg("PREVIEWERR %s\n" % str(e)[:80])
+            for ev in gestures.update(now, hand_sample):
+                out("GESTURE " + json.dumps(ev, separators=(",", ":")))
+
             got_hand = False
             if hres is not None and hres.hand_landmarks:
                 wrist = hres.hand_landmarks[0][0]   # landmark 0 = pulso
-                try:
-                    with open(WAVE_DEBUG, "a") as f:
-                        f.write("HAND x=%.3f y=%.3f\n" % (wrist.x, wrist.y))
-                except Exception:
-                    pass
+                dbg("HAND x=%.3f y=%.3f pose=%s\n"
+                    % (wrist.x, wrist.y,
+                       hand_sample["pose"] if hand_sample else "?"))
                 if wrist.y < 0.9:                   # mão em quase todo o quadro
                     wave_hist.append((now, wrist.x))
                     last_hand = now
@@ -246,12 +467,7 @@ def main():
                     d2 = xs[k] - xs[k - 1]
                     if d1 * d2 < 0 and abs(d2) > 0.008:
                         revs += 1
-                # Depuração: registra as métricas do gesto num arquivo local.
-                try:
-                    with open(WAVE_DEBUG, "a") as f:
-                        f.write("n=%d amp=%.3f revs=%d\n" % (len(xs), amp, revs))
-                except Exception:
-                    pass
+                dbg("n=%d amp=%.3f revs=%d\n" % (len(xs), amp, revs))
                 if amp > 0.06 and revs >= 2 and now - last_wave > WAVE_COOLDOWN:
                     last_wave = now
                     wave_hist = []
@@ -280,6 +496,8 @@ def main():
 
         if now - last_emit < 1.0 / EMIT_HZ:
             continue
+        if not face_now:
+            continue        # nada novo do rosto neste quadro
         last_emit = now
 
         lms = res.face_landmarks[0]
@@ -303,7 +521,14 @@ def main():
             blend = to_channels(bs)
 
         # Identidade (throttled — caro).
-        if recog is not None and owner_emb is not None and now - last_recog > RECOG_EVERY:
+        #
+        # Com a mão no quadro, adia: o insightface leva centenas de ms e trava
+        # o laço inteiro, inclusive a leitura da mão. Cair de 8 para 3 quadros
+        # no meio de um gesto é justamente o que se sente como "ele demora pra
+        # ler minha mão". Passado RECOG_MAX_DEFER, roda de qualquer jeito.
+        gesturing = hand_sample is not None and now - last_recog < RECOG_MAX_DEFER
+        if (recog is not None and owner_emb is not None and not gesturing
+                and now - last_recog > RECOG_EVERY):
             last_recog = now
             try:
                 faces = recog.get(frame)

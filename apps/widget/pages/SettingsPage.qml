@@ -403,6 +403,45 @@ Column {
         }
     }
 
+    // Toggle: aceno chama o Jorginho (só com câmera ligada).
+    Row {
+        spacing: 8
+        opacity: root.store.cameraEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.waveGreetEnabled ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.waveGreetEnabled ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.cameraEnabled)
+                        return;
+                    root.store.waveGreetEnabled = !root.store.waveGreetEnabled;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Acenar chama o Jorginho (ele aparece e passa a ouvir)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
     // Toggle: modo fantoche (só com câmera ligada).
     Row {
         spacing: 8
@@ -475,6 +514,212 @@ Column {
             color: root.store.faceOwner === 1 ? Theme.success : Theme.textDisabled
             font.pixelSize: Theme.fontSizeSmall
             font.family: Theme.fontFamily
+        }
+    }
+
+    Rectangle {
+        width: parent.width
+        height: 1
+        color: Theme.border
+    }
+
+    // ------------------------------------------------------------------
+    // Controle de janelas por gesto (ver services/WindowGestures.qml)
+    // ------------------------------------------------------------------
+
+    Row {
+        spacing: 8
+        Text {
+            text: "Controle por gesto"
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeLarge
+            font.bold: true
+        }
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.store.gestureArmed
+            width: armedText.implicitWidth + 14
+            height: 18
+            radius: Theme.radiusPill
+            color: Qt.alpha(Theme.accent, 0.18)
+            border.width: 1
+            border.color: Theme.accent
+            Text {
+                id: armedText
+                anchors.centerIn: parent
+                text: "mão no comando"
+                color: Theme.accent
+                font.pixelSize: Theme.fontSizeTiny
+                font.family: Theme.fontFamily
+            }
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "Mexe nas janelas do compositor com a mão, pela mesma webcam do avatar. "
+              + "Levante a mão aberta e segure 1s pra entrar no comando (aparece um selo na tela); "
+              + "3s parado desarma sozinho. Requer câmera ligada e o niri."
+        color: Theme.textSecondary
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
+    // Toggle: ligar o controle por gesto (só com câmera ligada).
+    Row {
+        spacing: 8
+        opacity: root.store.cameraEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.gesturesEnabled ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.gesturesEnabled ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.cameraEnabled)
+                        return;
+                    root.store.gesturesEnabled = !root.store.gesturesEnabled;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.store.cameraEnabled
+                  ? "Controlar janelas com a mão"
+                  : "Controlar janelas com a mão (ligue a câmera antes)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Toggle: espelho da mão (só com o controle por gesto ligado).
+    Row {
+        spacing: 8
+        opacity: root.store.gesturesEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.gesturePreview ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.gesturePreview ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.gesturesEnabled)
+                        return;
+                    root.store.gesturePreview = !root.store.gesturePreview;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Mostrar a câmera e os traços da mão ao gesticular"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Text {
+        width: parent.width
+        visible: root.store.gesturePreview
+        text: "O quadro aparece sobre a área de trabalho assim que a câmera vê sua "
+              + "mão, com o esqueleto detectado desenhado por cima — serve pra "
+              + "conferir que o movimento está sendo captado. A imagem fica só na "
+              + "memória da sessão e some junto com ela."
+        color: Theme.textDisabled
+        font.pixelSize: Theme.fontSizeTiny
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
+    // Vocabulário de gestos. Fixo por enquanto — a tabela existe para você
+    // lembrar do gesto sem abrir a documentação.
+    Rectangle {
+        width: parent.width
+        visible: root.store.gesturesEnabled
+        radius: Theme.radius
+        color: Theme.surface
+        border.width: 1
+        border.color: Theme.border
+        implicitHeight: gestureList.implicitHeight + 20
+
+        Column {
+            id: gestureList
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 10
+            spacing: 7
+
+            Repeater {
+                model: [
+                    { g: "✋ →", a: "próxima coluna" },
+                    { g: "✋ ←", a: "coluna anterior" },
+                    { g: "✋ ↑", a: "maximizar" },
+                    { g: "✋ ↓", a: "tela cheia" },
+                    { g: "☝ 3 dedos", a: "move o cursor do mouse" },
+                    { g: "☝ + polegar", a: "fecha o polegar = clique (segure pra arrastar)" },
+                    { g: "✊ fecha", a: "pega a janela sob o cursor" },
+                    { g: "✊ move", a: "a janela acompanha sua mão" },
+                    { g: "✋ abre", a: "solta a janela onde estiver" }
+                ]
+                delegate: Item {
+                    id: gestureRow
+                    required property var modelData
+                    width: gestureList.width
+                    height: 18
+
+                    Text {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 70
+                        text: gestureRow.modelData.g
+                        color: Theme.accent
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.bold: true
+                    }
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 74
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: gestureRow.modelData.a
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeSmall
+                        elide: Text.ElideRight
+                    }
+                }
+            }
         }
     }
 

@@ -169,6 +169,15 @@ ShellRoot {
                         active: panel.visible
                     }
 
+                    // Controle de janelas por gesto de mão. Ativo só no
+                    // painel visível: com um painel por monitor, sem esta
+                    // trava o mesmo gesto executaria a ação três vezes.
+                    WindowGestures {
+                        id: gestureSvc
+                        store: appStore
+                        active: panel.visible
+                    }
+
                     CopilotView {
                         id: copilotView
                         anchors.fill: parent
@@ -205,6 +214,41 @@ ShellRoot {
                     }
                 }
             }
+        }
+    }
+
+    // Retorno visual dos gestos (selo "no comando" e a confirmação de fechar
+    // janela), numa camada própria sobre a área de trabalho. Só existe
+    // enquanto há o que mostrar — fora isso, nenhuma superfície é criada.
+    PanelWindow {
+        id: gestureLayer
+        visible: appStore.gesturesEnabled && appStore.cameraEnabled
+                 && gestureOverlay.showing
+        // Só a caixa que o conteúdo pede: o espelho da mão entra e sai, e uma
+        // janela de altura fixa deixaria um retângulo vazio na área de
+        // trabalho o tempo todo.
+        implicitHeight: gestureOverlay.desiredHeight
+        screen: Quickshell.screens[0]
+        color: "transparent"
+
+        anchors {
+            bottom: true
+        }
+        margins {
+            bottom: 60
+        }
+
+        implicitWidth: 460
+        exclusiveZone: 0
+
+        WlrLayershell.layer: WlrLayer.Overlay
+        // Nunca rouba o teclado: você confirma com o mouse ou deixa expirar.
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        GestureOverlay {
+            id: gestureOverlay
+            anchors.fill: parent
+            store: appStore
         }
     }
 
