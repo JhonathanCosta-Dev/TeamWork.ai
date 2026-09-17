@@ -29,6 +29,7 @@ test:
     python3 apps/widget/services/test_gestures.py
     python3 apps/widget/services/test_wake.py
     python3 apps/widget/services/test_pointer.py
+    python3 apps/widget/services/test_cameras.py
     @VENV=~/.local/share/teamwork-ai/facetrack/venv/bin/python; \
       [ -x "$VENV" ] && "$VENV" apps/widget/services/test_preview.py \
       || echo "(espelho da mão: venv do facetrack ausente, pulando)"

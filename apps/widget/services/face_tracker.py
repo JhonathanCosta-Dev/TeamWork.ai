@@ -53,7 +53,8 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gestures import HandGestures, classify_pose, thumb_ratio  # noqa: E402
+from gestures import (HandGestures, classify_pose, escolher_mao,  # noqa: E402
+                      thumb_ratio)
 
 # Teto de threads das bibliotecas de visão. Precisa vir ANTES do import de
 # cv2/mediapipe/onnxruntime: as três leem isto na inicialização e, sem teto,
@@ -115,6 +116,17 @@ EMIT_HZ = 12.0            # taxa máxima de emissão FACE
 # saber que você está aí, que é você, e para o aceno.
 PROCESS_HZ = 12.0
 PROCESS_HZ_LOW = 5.0
+# Com a mão COMANDANDO (cursor ou arrasto), o laço vai ao teto: a fluidez do
+# ponteiro é a taxa de amostragem da mão. Cabe porque, nesse momento, o rosto
+# passa a rodar em um quarto dos quadros — quem move o cursor não está olhando
+# o avatar.
+#
+# 30 é o teto FÍSICO da câmera (medido: nenhuma webcam desta máquina passa de
+# 30 fps em nenhum formato). Na prática o processamento chega a ~25: o
+# detector de mãos custa ~38 ms por quadro e — medido — NÃO paraleliza, dá o
+# mesmo tempo com 2 ou com 12 núcleos. Pôr 30 aqui só garante que o limitador
+# nunca seja o gargalo; quem manda é o modelo.
+PROCESS_HZ_FAST = 30.0
 # Segundos entre checagens de identidade. Cada uma custa ~600 ms de CPU
 # (medido), então a frequência é o que decide o peso dela: a 3 s era o segundo
 # maior gasto do processo, e ninguém troca de pessoa na frente da câmera nesse
@@ -250,7 +262,9 @@ def main():
     # Não adianta a câmera entregar 30 quadros se só ~8 são processados: o
     # resto é decodificação jogada fora. Nem toda webcam respeita, daí o
     # descarte por `grab()` continuar valendo no laço.
-    cap.set(cv2.CAP_PROP_FPS, 15)
+    # 30 é o que estas webcams entregam no máximo; o descarte por `grab()`
+    # abaixo é quem decide quantos realmente viram trabalho.
+    cap.set(cv2.CAP_PROP_FPS, 30)
     # Buffer curto: com fila, o quadro processado é o de um segundo atrás e o
     # avatar responde atrasado.
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -275,7 +289,11 @@ def main():
         try:
             hopts = vision.HandLandmarkerOptions(
                 base_options=mp_python.BaseOptions(model_asset_path=hand_model),
-                num_hands=1,
+                # Duas mãos para poder escolher a mais próxima (ver
+                # gestures.escolher_mao). Medido: custa ~2 ms a mais por
+                # quadro — o detector de palma, que é a parte cara, roda uma
+                # vez só; o extra é o modelo de pontos da segunda mão.
+                num_hands=2,
                 running_mode=vision.RunningMode.VIDEO,
             )
             hand_landmarker = vision.HandLandmarker.create_from_options(hopts)
@@ -321,6 +339,7 @@ def main():
     last_wave = 0.0
     last_hand = 0.0
     last_hand_seen = 0.0      # qualquer mão no quadro, em qualquer altura
+    last_face_seen = 0.0      # último quadro com rosto (a tela pode estar vazia)
     frame_i = 0
     last_process = 0.0
     WAVE_COOLDOWN = 6.0       # s entre acenos (não repetir a saudação)
@@ -351,8 +370,13 @@ def main():
         now = time.time()
         # Em modo econômico (avatar fora da tela e sem gestos), o laço inteiro
         # desacelera — é o que transforma o trabalho poupado em CPU poupada.
-        alvo_hz = PROCESS_HZ if (_cmd["face_full"] or _cmd["hands"]) \
-            else PROCESS_HZ_LOW
+        comandando = gestures.pointing or gestures.dragging
+        if comandando:
+            alvo_hz = PROCESS_HZ_FAST
+        elif _cmd["face_full"] or _cmd["hands"]:
+            alvo_hz = PROCESS_HZ
+        else:
+            alvo_hz = PROCESS_HZ_LOW
         if now - last_process < 1.0 / alvo_hz:
             continue        # descartado sem decodificar
         ok, frame = cap.retrieve()
@@ -381,7 +405,15 @@ def main():
         # copiloto. Nos outros modos, animá-lo a 8 quadros por segundo é
         # calcular expressão para ninguém ver: em LOW, um quarto dos quadros
         # basta para saber que você está aí e que é você.
-        face_now = _cmd["face_full"] or frame_i % 4 == 0
+        # O rosto é barato, mas com a tela vazia há minutos não há motivo para
+        # procurá-lo 12 vezes por segundo.
+        if _cmd["face_full"] and not comandando:
+            passo_rosto = 1
+        elif now - last_face_seen > 10.0:
+            passo_rosto = 8
+        else:
+            passo_rosto = 4
+        face_now = frame_i % passo_rosto == 0
         if face_now:
             try:
                 res = landmarker.detect_for_video(mp_image, ts)
@@ -396,11 +428,29 @@ def main():
         # movimento. Sem mão à vista, reveza (ver abaixo).
         if frame_i % 45 == 0:                       # heartbeat (loop vivo)
             dbg("alive f=%d hist=%d\n" % (frame_i, len(wave_hist)))
-        # Sem mão à vista há um tempo, revezar: metade do custo do segundo
-        # modelo, e o pior caso ao levantar a mão é um quadro de atraso
-        # (~0,13 s), que ninguém percebe.
-        hands_idle = now - last_hand_seen > 3.0
-        hands_now = _cmd["hands"] and (not hands_idle or frame_i % 2 == 0)
+        # Procurar mão é o gasto dominante do processo (~39 ms por quadro,
+        # medido — contra ~11 ms do rosto). E, na maior parte do tempo, não há
+        # mão nenhuma no quadro: procurar a cada quadro é pagar o preço caro
+        # para não achar nada.
+        #
+        # Então o intervalo cresce com o tempo sem ver mão. O preço é a
+        # demora em NOTAR a mão que sobe — e ela é pequena perto do meio
+        # segundo que o gesto de armar já exige:
+        #   à vista/comandando : todo quadro  (o gesto precisa de amostragem)
+        #   sem mão há 3 s     : 1 em 3       (~0,12 s para notar)
+        #   sem mão há 15 s    : 1 em 6       (~0,25 s)
+        #   sem ninguém na tela: 1 em 10      (~0,4 s; sem rosto, sem mão)
+        sem_mao = now - last_hand_seen
+        sem_rosto = now - last_face_seen
+        if comandando or sem_mao < 3.0:
+            passo_maos = 1
+        elif sem_rosto > 10.0:
+            passo_maos = 10
+        elif sem_mao > 15.0:
+            passo_maos = 6
+        else:
+            passo_maos = 3
+        hands_now = _cmd["hands"] and frame_i % passo_maos == 0
         if hand_landmarker is not None and hands_now:
             try:
                 hres = hand_landmarker.detect_for_video(mp_image, ts)
@@ -411,17 +461,32 @@ def main():
             # alimenta o reconhecedor (ver gestures.py). Custo zero a mais —
             # o HandLandmarker já rodou neste quadro.
             if hres is not None and hres.hand_landmarks:
-                hand_lms = hres.hand_landmarks[0]
+                # Com as duas no quadro, comanda a que está à frente. A
+                # escolha usa os pontos da IMAGEM: é o tamanho aparente que
+                # revela quem está mais perto.
+                escolhida = escolher_mao(hres.hand_landmarks)
+                hand_lms = hres.hand_landmarks[escolhida]
+
+                # Já a POSE sai dos pontos em metros que o mesmo modelo
+                # devolve de brinde (`hand_world_landmarks`): ali a distância
+                # entre juntas é física, não projetada. Uma mão inclinada para
+                # a câmera tem as distâncias encurtadas na imagem — era o que
+                # fazia um polegar aberto medir como fechado.
+                pose_lms = hand_lms
+                if hres.hand_world_landmarks and \
+                        escolhida < len(hres.hand_world_landmarks):
+                    pose_lms = hres.hand_world_landmarks[escolhida]
+
                 hand_sample = {
                     "x": hand_lms[0].x,
                     "y": hand_lms[0].y,
-                    "pose": classify_pose(hand_lms),
+                    "pose": classify_pose(pose_lms),
                 }
             if hand_sample is not None:
                 last_hand_seen = now
                 stats_poses[hand_sample["pose"]] = \
                     stats_poses.get(hand_sample["pose"], 0) + 1
-                stats_thumb = thumb_ratio(hand_lms)
+                stats_thumb = thumb_ratio(pose_lms)
 
             # Espelho da mão (opt-in): o quadro vai pra tmpfs e os 21 pontos
             # pelo stdout — quem desenha o esqueleto é a interface, que tem o
@@ -447,7 +512,7 @@ def main():
 
             got_hand = False
             if hres is not None and hres.hand_landmarks:
-                wrist = hres.hand_landmarks[0][0]   # landmark 0 = pulso
+                wrist = hand_lms[0]                 # landmark 0 = pulso
                 dbg("HAND x=%.3f y=%.3f pose=%s\n"
                     % (wrist.x, wrist.y,
                        hand_sample["pose"] if hand_sample else "?"))
@@ -488,7 +553,9 @@ def main():
             else:
                 out("ERR reconhecimento indisponível (insightface não instalado)")
 
-        if not res.face_landmarks:
+        if res.face_landmarks:
+            last_face_seen = now
+        else:
             if now - no_face_emitted > 0.5:
                 no_face_emitted = now
                 out("NOFACE")

@@ -132,7 +132,12 @@ Mexe nas janelas do compositor com a mão, pela **mesma webcam** que o avatar j�
 usa para olhar pra você — sem hardware novo e sem enviar nada pra fora: o
 reconhecimento roda local, e do Python só saem os nomes dos gestos.
 
-Ligue em **Config → Controle por gesto** (precisa da câmera ligada). Depende do
+Ligue em **Config → Controle por gesto** (precisa da câmera ligada).
+
+Com mais de uma webcam, **Config → Câmera usada** lista as que existem e deixa
+escolher; a lista sai de `services/cameras.py`, que pergunta ao driver quais
+`/dev/videoN` capturam imagem de verdade — cada webcam expõe também um nó de
+metadados, com nome idêntico, que nunca produz quadro. Depende do
 [niri](https://github.com/YaLTeR/niri), que recebe as ações por `niri msg`.
 
 | gesto | ação |
@@ -162,6 +167,11 @@ Fechar janela **não** é um gesto: some da câmera qualquer caminho para uma a�
 irreversível. O teclado dá conta disso, e um falso positivo custaria trabalho
 não salvo.
 
+Com as duas mãos no quadro, **comanda a que está mais perto da câmera** — é a
+que você levantou de propósito, enquanto a outra costuma estar no teclado. A
+régua é o tamanho da **palma**, que é rígida: medir a mão inteira faria um
+punho perto perder para uma mão aberta ao fundo.
+
 **Levante a mão aberta e segure meio segundo pra entrar no comando**: aparece um selo na
 tela dizendo que a mão está no comando, e a partir daí os gestos valem. Três
 segundos sem gesto desarma sozinho. Sem essa trava, gesticular numa conversa
@@ -176,6 +186,20 @@ Requer o modelo de mãos (`hand_landmarker.task`) e, para o arrasto, o pacote
 por `scripts/setup-facetrack.sh`. Numa sessão de desktop comum a permissão do
 uinput vem por ACL do seat, sem root nem grupo extra (`getfacl /dev/uinput`).
 Sem ela, os outros gestos funcionam e só o arrasto fica de fora.
+
+**Fluidez.** O cursor é tão fluido quanto a taxa com que a mão é amostrada, e
+três coisas trabalham juntas nisso: enquanto a mão comanda, o laço do tracker
+acelera para 24 Hz (e o rosto cede a vez, já que ninguém olha o avatar no meio
+de um arrasto); a posição passa por um filtro 1€, que corta o tremor sem
+atrasar o movimento; e cada deslocamento é repartido em passos curtos
+entregues a ~120 Hz, para o cursor não andar aos saltos no ritmo da câmera.
+
+**Onde os avisos aparecem.** O selo "no comando" e o espelho da mão flutuam
+sobre a área de trabalho; em **Config → Onde mostrar os avisos de gesto** dá
+para escolher o canto (a grade é uma miniatura da tela) e, com mais de um
+monitor, em qual tela. Por padrão vão no rodapé central do mesmo monitor do
+widget — mas quem usa gesto costuma estar longe do teclado, e nem sempre é ali
+que os olhos estão.
 
 **Ver a mão sendo captada**: em Config, logo abaixo do interruptor do controle
 por gesto, ligue *"Mostrar a câmera e os traços da mão ao gesticular"*. Aparece
@@ -245,6 +269,7 @@ config/ packaging/ scripts/ docs/ assets/avatars/
 cargo test --workspace                          # sem internet
 python3 apps/widget/services/test_gestures.py   # reconhecedor de gestos
 python3 apps/widget/services/test_wake.py       # gatilho da ativação por voz
+python3 apps/widget/services/test_cameras.py   # listagem de câmeras
 python3 apps/widget/services/test_pointer.py   # ponteiro virtual do arrasto
 
 # precisa do venv do rastreamento (opencv):

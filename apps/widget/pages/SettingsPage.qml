@@ -403,6 +403,75 @@ Column {
         }
     }
 
+    // Qual webcam usar. Só aparece com mais de uma — numa máquina de câmera
+    // única, a pergunta não existe.
+    Column {
+        width: parent.width
+        spacing: 6
+        visible: root.store.cameraList.length > 1
+
+        Text {
+            text: "Câmera usada"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+
+        Flow {
+            width: parent.width
+            spacing: 4
+
+            Repeater {
+                model: root.store.cameraList
+
+                delegate: Rectangle {
+                    id: camChip
+                    required property var modelData
+                    readonly property bool escolhida:
+                        camChip.modelData.index === root.store.cameraDevice
+
+                    width: camText.implicitWidth + 20
+                    height: 26
+                    radius: Theme.radiusPill
+                    color: camChip.escolhida ? Qt.alpha(Theme.accent, 0.2)
+                                             : Theme.surface
+                    border.width: 1
+                    border.color: camChip.escolhida ? Theme.accent : Theme.border
+
+                    Text {
+                        id: camText
+                        anchors.centerIn: parent
+                        text: camChip.modelData.label ?? camChip.modelData.name
+                        color: camChip.escolhida ? Theme.accent : Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (camChip.escolhida)
+                                return;
+                            root.store.cameraDevice = camChip.modelData.index;
+                            root.store.saveUiSettings();
+                        }
+                    }
+                }
+            }
+        }
+
+        Text {
+            width: parent.width
+            visible: root.store.cameraEnabled
+            text: "Trocar reinicia o rastreamento — a imagem volta em alguns segundos."
+            color: Theme.textDisabled
+            font.pixelSize: Theme.fontSizeTiny
+            font.family: Theme.fontFamily
+            wrapMode: Text.WordWrap
+        }
+    }
+
     // Toggle: aceno chama o Jorginho (só com câmera ligada).
     Row {
         spacing: 8
@@ -658,6 +727,164 @@ Column {
         font.pixelSize: Theme.fontSizeTiny
         font.family: Theme.fontFamily
         wrapMode: Text.WordWrap
+    }
+
+    // Onde os avisos de gesto aparecem. O seletor é uma miniatura da tela:
+    // clicar no canto é mais direto do que ler "inferior-direito" numa lista.
+    Column {
+        width: parent.width
+        spacing: 6
+        visible: root.store.gesturesEnabled
+
+        Text {
+            text: "Onde mostrar os avisos de gesto"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+
+        Row {
+            spacing: 10
+
+            // Miniatura da tela com as seis posições.
+            Rectangle {
+                width: 132
+                height: 78
+                radius: Theme.radiusSmall
+                color: Theme.surface
+                border.width: 1
+                border.color: Theme.border
+
+                Grid {
+                    anchors.fill: parent
+                    anchors.margins: 5
+                    columns: 3
+                    rows: 2
+                    spacing: 3
+
+                    Repeater {
+                        model: ["top-left", "top-center", "top-right",
+                                "bottom-left", "bottom-center", "bottom-right"]
+
+                        delegate: Rectangle {
+                            id: posCell
+                            required property var modelData
+                            readonly property bool atual:
+                                root.store.gesturePosition === posCell.modelData
+
+                            width: 38
+                            height: 32
+                            radius: 4
+                            color: posCell.atual ? Qt.alpha(Theme.accent, 0.3)
+                                 : cellMouse.containsMouse ? Theme.surfaceAlt
+                                                           : Theme.surface
+                            border.width: 1
+                            border.color: posCell.atual ? Theme.accent : Theme.border
+
+                            // Um traço no lugar onde o aviso vai aparecer.
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 18
+                                height: 4
+                                radius: 2
+                                color: posCell.atual ? Theme.accent : Theme.textDisabled
+                                opacity: posCell.atual ? 1 : 0.5
+                            }
+
+                            MouseArea {
+                                id: cellMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.store.gesturePosition = posCell.modelData;
+                                    root.store.saveUiSettings();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4
+                visible: root.screens.length > 1
+
+                Text {
+                    text: "Em qual tela"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: Theme.fontFamily
+                }
+
+                Flow {
+                    width: 180
+                    spacing: 4
+
+                    Rectangle {
+                        width: mesmoText.implicitWidth + 14
+                        height: 22
+                        radius: Theme.radiusPill
+                        color: root.store.gestureMonitor === ""
+                               ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
+                        border.width: 1
+                        border.color: root.store.gestureMonitor === ""
+                                      ? Theme.accent : Theme.border
+                        Text {
+                            id: mesmoText
+                            anchors.centerIn: parent
+                            text: "a do widget"
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeTiny
+                            font.family: Theme.fontFamily
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.store.gestureMonitor = "";
+                                root.store.saveUiSettings();
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        model: root.screens
+                        delegate: Rectangle {
+                            id: gmChip
+                            required property var modelData
+                            readonly property bool atual:
+                                root.store.gestureMonitor === gmChip.modelData.name
+
+                            width: gmText.implicitWidth + 14
+                            height: 22
+                            radius: Theme.radiusPill
+                            color: gmChip.atual ? Qt.alpha(Theme.accent, 0.25)
+                                                : Theme.surface
+                            border.width: 1
+                            border.color: gmChip.atual ? Theme.accent : Theme.border
+                            Text {
+                                id: gmText
+                                anchors.centerIn: parent
+                                text: gmChip.modelData.name
+                                color: Theme.textPrimary
+                                font.pixelSize: Theme.fontSizeTiny
+                                font.family: Theme.monoFamily
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.store.gestureMonitor = gmChip.modelData.name;
+                                    root.store.saveUiSettings();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Vocabulário de gestos. Fixo por enquanto — a tabela existe para você

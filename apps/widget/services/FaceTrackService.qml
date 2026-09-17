@@ -39,6 +39,39 @@ Item {
         root._crashes = 0;
     }
 
+    // Lista de câmeras: descoberta uma vez, sem depender do venv (o
+    // cameras.py é Python puro e roda no interpretador do sistema).
+    Process {
+        id: cameraScan
+        running: false
+        command: ["python3", Qt.resolvedUrl("cameras.py").toString()
+                                .replace(/^file:\/\//, "")]
+        stdout: SplitParser {
+            onRead: message => {
+                try {
+                    const lista = JSON.parse(message);
+                    root.store.cameraList = lista;
+                    // A câmera salva pode ter sido desconectada: cai na
+                    // primeira disponível em vez de tentar um /dev que não
+                    // existe mais e ficar sem imagem sem explicação.
+                    if (lista.length > 0
+                            && !lista.some(c => c.index === root.store.cameraDevice)) {
+                        root.store.cameraDevice = lista[0].index;
+                        root.store.saveUiSettings();
+                    }
+                } catch (e) {
+                    // saída inesperada — mantém a lista como está
+                }
+            }
+        }
+    }
+
+    function scanCameras() {
+        cameraScan.running = true;
+    }
+
+    Component.onCompleted: root.scanCameras()
+
     // Pedido de cadastro do dono vindo das Configurações.
     Connections {
         target: root.store
@@ -179,6 +212,32 @@ Item {
         }
     }
 
+    // Troca de câmera: o processo precisa CAIR e subir de novo.
+    //
+    // Mudar o `command` de um Process que já está rodando não o reinicia — o
+    // novo valor só vale na próxima vez que ele subir. E como o tracker sobe
+    // assim que a câmera é ligada, enquanto as configurações ainda estão
+    // vindo do daemon (assíncronas), ele pegava sempre o índice padrão: a
+    // escolha ficava salva e não acontecia nada.
+    property bool _trocandoCamera: false
+
+    Timer {
+        id: reiniciarTracker
+        interval: 400
+        onTriggered: root._trocandoCamera = false
+    }
+
+    Connections {
+        target: root.store
+        function onCameraDeviceChanged() {
+            if (!proc.running)
+                return;      // ainda vai subir; pegará o índice novo sozinho
+            root.store.faceStatus = "trocando de câmera…";
+            root._trocandoCamera = true;
+            reiniciarTracker.restart();
+        }
+    }
+
     // Espera imposta depois de a câmera recusar. Sem isto, o Process do
     // Quickshell sobe outro imediatamente e o ciclo vira um moinho de CPU
     // enquanto a câmera estiver em uso (por outro widget, pelo diagnóstico,
@@ -196,12 +255,17 @@ Item {
     Process {
         id: proc
         running: root.enabled && root._available && !root._cooling
+                 && !root._trocandoCamera
         stdinEnabled: true
+        // A câmera escolhida entra pelo ambiente: é o que o tracker lê em
+        // TEAMWORK_FACE_CAMERA. Trocar de webcam reinicia o processo (o
+        // `command` muda), que é o comportamento certo — um dispositivo de
+        // captura não troca com ele aberto.
         command: ["setsid", "bash", "-c",
             'PP=$PPID; '
             + '( while kill -0 "$PP" 2>/dev/null; do sleep 5; done; kill 0 ) & '
-            + 'exec "$1" -u "$2"',
-            "--", root._py, root._script]
+            + 'export TEAMWORK_FACE_CAMERA="$3"; exec "$1" -u "$2"',
+            "--", root._py, root._script, String(root.store.cameraDevice)]
         stdout: SplitParser {
             onRead: message => root._onLine(message.trim())
         }

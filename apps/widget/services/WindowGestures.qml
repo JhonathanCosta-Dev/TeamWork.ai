@@ -68,7 +68,7 @@ Item {
             const my = Math.round(dy * gain);
             if (mx === 0 && my === 0)
                 return;
-            pointer.write("MOVE " + mx + " " + my + "\n");
+            root._empurrar(mx, my);
         }
 
         function onGestureDetected(name, pose) {
@@ -125,6 +125,7 @@ Item {
                 return;
             }
             if (name === "point_end") {
+                root._pararMovimento();
                 // Sair da pose com o polegar fechado tem de soltar o botão:
                 // um clique preso captura tudo o que vier depois.
                 if (root.store.clicking) {
@@ -155,6 +156,7 @@ Item {
             }
 
             if (name === "release") {
+                root._pararMovimento();
                 pointer.write("RELEASE\n");
                 root.store.dragging = false;
                 root.store.lastGesture = "soltou";
@@ -189,6 +191,61 @@ Item {
     // ------------------------------------------------------------------
     // Execução
     // ------------------------------------------------------------------
+
+    // ------------------------------------------------------------------
+    // Movimento do cursor, distribuído no tempo
+    // ------------------------------------------------------------------
+    // A mão é amostrada em quadros; o cursor, se recebesse o deslocamento
+    // inteiro de uma vez, andaria aos saltos no ritmo da câmera. Aqui cada
+    // movimento é repartido em passos curtos, entregues a ~120 Hz — o mesmo
+    // caminho percorrido, mas contínuo aos olhos.
+    property int _restoX: 0
+    property int _restoY: 0
+
+    function _empurrar(mx, my) {
+        root._restoX += mx;
+        root._restoY += my;
+        if (!suavizador.running)
+            suavizador.start();
+    }
+
+    // Fração do movimento pendente entregue a cada tique. É o botão entre
+    // suavidade e latência, e ele foi longe demais para o lado da suavidade:
+    // com 0,34 o cursor só recebia 96% do movimento depois de 64 ms — atraso
+    // que se SENTE, somado aos ~33 ms da câmera e ~39 ms do modelo. Com 0,55
+    // isso cai para ~18 ms e o movimento continua contínuo.
+    property real suavidade: 0.55
+
+    Timer {
+        id: suavizador
+        interval: 6            // ~165 Hz: acima de qualquer tela
+        repeat: true
+        onTriggered: {
+            // Uma fração do que falta por vez: o movimento desacelera no fim
+            // em vez de parar de supetão, que é o que dá a sensação de peso.
+            const px = Math.round(root._restoX * root.suavidade);
+            const py = Math.round(root._restoY * root.suavidade);
+            const dx = px !== 0 ? px : (root._restoX !== 0
+                                        ? (root._restoX > 0 ? 1 : -1) : 0);
+            const dy = py !== 0 ? py : (root._restoY !== 0
+                                        ? (root._restoY > 0 ? 1 : -1) : 0);
+            if (dx === 0 && dy === 0) {
+                suavizador.stop();
+                return;
+            }
+            root._restoX -= dx;
+            root._restoY -= dy;
+            pointer.write("MOVE " + dx + " " + dy + "\n");
+        }
+    }
+
+    // Soltar o comando zera o que restou: movimento pendente depois de
+    // largar a janela seria o cursor andando sozinho.
+    function _pararMovimento() {
+        root._restoX = 0;
+        root._restoY = 0;
+        suavizador.stop();
+    }
 
     // Fila de comandos: um Process só, um comando por vez. Reaproveitar o
     // mesmo Process sem esperar o anterior terminar descartava o comando —

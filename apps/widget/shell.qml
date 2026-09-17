@@ -228,14 +228,38 @@ ShellRoot {
         // janela de altura fixa deixaria um retângulo vazio na área de
         // trabalho o tempo todo.
         implicitHeight: gestureOverlay.desiredHeight
-        screen: Quickshell.screens[0]
+        // Monitor escolhido em Config; vazio = o mesmo do widget, e se aquele
+        // também estiver vazio (ou desconectado), o primeiro da lista.
+        screen: {
+            const alvo = appStore.gestureMonitor !== ""
+                         ? appStore.gestureMonitor : appStore.monitorName;
+            if (alvo !== "") {
+                for (const s of Quickshell.screens)
+                    if (s.name === alvo)
+                        return s;
+            }
+            return Quickshell.screens[0];
+        }
         color: "transparent"
 
+        // A posição vem de um par "vertical-horizontal" (ex.: "bottom-right").
+        // Ancorar nos dois lados de um eixo é o que faz o painel esticar; por
+        // isso o centro ancora nos dois e os cantos só em um.
+        readonly property var _pos: appStore.gesturePosition.split("-")
+        readonly property string _vert: gestureLayer._pos[0] ?? "bottom"
+        readonly property string _horiz: gestureLayer._pos[1] ?? "center"
+
         anchors {
-            bottom: true
+            top: gestureLayer._vert === "top"
+            bottom: gestureLayer._vert === "bottom"
+            left: gestureLayer._horiz !== "right"
+            right: gestureLayer._horiz !== "left"
         }
         margins {
+            top: 60
             bottom: 60
+            left: 24
+            right: 24
         }
 
         implicitWidth: 460

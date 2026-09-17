@@ -7,6 +7,9 @@ import unittest
 
 from gestures import (
     ARM_HOLD,
+    thumb_ratio,
+    escolher_mao,
+    tamanho_palma,
     HandGestures,
     POSE_FIST,
     POSE_OPEN,
@@ -487,6 +490,224 @@ class RealFrameRate(unittest.TestCase):
         evs = feed(rec, ARM_HOLD + 0.7, slide(POSE_OPEN, 0.5, 0.95, steps=4),
                    dt=SLOW_DT)
         self.assertTrue(any(n.startswith("swipe") for n in names(evs)))
+
+
+# --- profundidade: a perspectiva mente -------------------------------------
+
+def girar_para_a_camera(mao, graus):
+    """Inclina a mão em torno do eixo horizontal, em 3D de verdade.
+
+    Devolve (pontos_em_3d, pontos_como_a_camera_ve). Os 3D são o que o modelo
+    entrega em `hand_world_landmarks`; os 2D são a sombra deles na imagem —
+    e é aí que a perspectiva come as distâncias.
+    """
+    import math
+    r = math.radians(graus)
+    tres_d, projetada = [], []
+    for (x, y) in mao:
+        dy = y - 0.9
+        ny = dy * math.cos(r)
+        nz = dy * math.sin(r)
+        tres_d.append((x, 0.9 + ny, nz))
+        projetada.append((x, 0.9 + ny))       # a câmera só vê x e y
+    return tres_d, projetada
+
+
+class Profundidade(unittest.TestCase):
+    def test_medida_em_metros_nao_muda_com_a_inclinacao(self):
+        # É o ganho de usar os pontos 3D: a mão inclinada continua sendo a
+        # mesma mão. Em 2D, a mesma pose muda de número conforme o ângulo —
+        # foi assim que um polegar aberto passou a medir como fechado.
+        mao = hand_pointer(polegar_aberto=True)
+        base = thumb_ratio([(x, y, 0.0) for (x, y) in mao])
+        for graus in (20, 40, 60):
+            tres_d, _ = girar_para_a_camera(mao, graus)
+            self.assertAlmostEqual(
+                thumb_ratio(tres_d), base, places=6,
+                msg=f"a medida 3D mudou ao inclinar {graus}°")
+
+    def test_medida_plana_se_perde_com_a_inclinacao(self):
+        mao = hand_pointer(polegar_aberto=True)
+        base = thumb_ratio(mao)
+        _, projetada = girar_para_a_camera(mao, 60)
+        self.assertNotAlmostEqual(
+            thumb_ratio(projetada), base, places=2,
+            msg="se o 2D não mudasse, não haveria motivo para usar o 3D")
+
+    def test_pose_continua_certa_com_pontos_3d(self):
+        tres_d, _ = girar_para_a_camera(hand_landmarks(True), 45)
+        self.assertEqual(classify_pose(tres_d), POSE_OPEN)
+        tres_d_punho, _ = girar_para_a_camera(hand_landmarks(False), 45)
+        self.assertEqual(classify_pose(tres_d_punho), POSE_FIST)
+
+    def test_pontos_2d_continuam_valendo(self):
+        # Sem profundidade (pares simples), tudo segue como antes: z entra
+        # como zero e nada muda.
+        self.assertEqual(classify_pose(hand_landmarks(True)), POSE_OPEN)
+        self.assertEqual(classify_pose(hand_landmarks(False)), POSE_FIST)
+
+    def test_proximidade_ignora_a_profundidade(self):
+        # `tamanho_palma` mede o tamanho APARENTE: é ele que revela quem está
+        # mais perto. Se levasse o z em conta, toda mão mediria igual.
+        longe = afastar(hand_landmarks(True), 0.5)
+        com_z = [(x, y, 0.4) for (x, y) in longe]
+        self.assertAlmostEqual(tamanho_palma(longe), tamanho_palma(com_z), places=6)
+
+
+# --- previsão: adiantar sem passar do ponto --------------------------------
+
+class Previsao(unittest.TestCase):
+    """Compensar a latência é bom; ultrapassar o alvo é pior que chegar tarde."""
+
+    def _posicoes(self, rec, amostras, dt=1 / 25):
+        """Posições acumuladas do cursor durante o movimento."""
+        t = ARM_HOLD + 0.5
+        pos = 0.0
+        for a in amostras:
+            for ev in rec.update(t, a):
+                if ev["name"] == "move":
+                    pos += ev["dx"]
+            t += dt
+        return pos
+
+    def armado(self):
+        rec = HandGestures(mirror=False)
+        feed(rec, 0.0, still(POSE_OPEN, ARM_HOLD + 0.3))
+        return rec
+
+    def test_movimento_constante_nao_ultrapassa(self):
+        # A mão anda 0,3 e para. O cursor não pode ter andado mais que isso
+        # com folga: a previsão adianta durante o movimento, mas o total tem
+        # de bater com o percurso real.
+        rec = self.armado()
+        amostras = [{"x": 0.5 + 0.03 * i, "y": 0.5, "pose": POSE_POINT}
+                    for i in range(11)]
+        amostras += still(POSE_POINT, 1.2, x=0.8, y=0.5)   # freia e fica parada
+        andou = self._posicoes(rec, amostras)
+        self.assertLess(abs(andou - 0.3), 0.02,
+                        f"o cursor andou {andou:.3f} para uma mão que andou 0,300")
+
+    def test_parada_brusca_volta_ao_lugar(self):
+        # Freada seca: a previsão chega a passar, mas tem de voltar — e o
+        # resultado final precisa bater com onde a mão parou.
+        rec = self.armado()
+        amostras = [{"x": 0.4 + 0.05 * i, "y": 0.5, "pose": POSE_POINT}
+                    for i in range(6)]
+        amostras += still(POSE_POINT, 1.5, x=0.65, y=0.5)
+        andou = self._posicoes(rec, amostras)
+        self.assertLess(abs(andou - 0.25), 0.02,
+                        f"sobrou {andou - 0.25:+.3f} depois da freada")
+
+    def test_salto_previsto_tem_teto(self):
+        from gestures import PREDICAO_MAXIMA, PREDICAO_SEGUNDOS, OneEuro
+        f = OneEuro()
+        t = 0.0
+        # Velocidade absurda (quadro mal estimado): a projeção não pode
+        # mandar o cursor para o outro lado da tela.
+        for i in range(6):
+            f(0.1 + i * 0.4, t)
+            t += 1 / 25
+        salto = abs(f.velocidade() * PREDICAO_SEGUNDOS)
+        self.assertGreater(salto, PREDICAO_MAXIMA,
+                           "o teste precisa de uma velocidade que estoure o teto")
+        # E o limitador segura:
+        from gestures import _limitar
+        self.assertLessEqual(abs(_limitar(f.velocidade() * PREDICAO_SEGUNDOS,
+                                          PREDICAO_MAXIMA)), PREDICAO_MAXIMA)
+
+    def test_mao_parada_nao_gera_previsao(self):
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, still(POSE_POINT, 1.0))
+        self.assertEqual(names(evs).count("move"), 0,
+                         "sem movimento não há o que prever")
+
+
+# --- qual mão comanda -----------------------------------------------------
+
+def afastar(mao, fator):
+    """A mesma mão, menor no quadro — como se estivesse mais longe."""
+    return [(0.5 + (x - 0.5) * fator, 0.9 + (y - 0.9) * fator) for (x, y) in mao]
+
+
+class MaoMaisProxima(unittest.TestCase):
+    def test_escolhe_a_maior_no_quadro(self):
+        perto = hand_landmarks(True)
+        longe = afastar(perto, 0.45)
+        self.assertEqual(escolher_mao([longe, perto]), 1)
+        self.assertEqual(escolher_mao([perto, longe]), 0)
+
+    def test_sem_maos(self):
+        self.assertIsNone(escolher_mao([]))
+
+    def test_uma_mao_so(self):
+        self.assertEqual(escolher_mao([hand_landmarks(True)]), 0)
+
+    def test_punho_perto_ganha_de_mao_aberta_longe(self):
+        # A armadilha: medir a mão INTEIRA faria o punho (compacto) parecer
+        # menor que uma mão aberta ao fundo, e quem comanda passaria a
+        # depender da pose em vez da distância. Por isso a régua é a palma,
+        # que não encolhe ao fechar a mão.
+        punho_perto = hand_landmarks(False)
+        aberta_longe = afastar(hand_landmarks(True), 0.6)
+        self.assertEqual(escolher_mao([aberta_longe, punho_perto]), 1)
+
+    def test_a_pose_nao_muda_o_tamanho_da_palma(self):
+        aberta = tamanho_palma(hand_landmarks(True))
+        fechada = tamanho_palma(hand_landmarks(False))
+        self.assertAlmostEqual(aberta, fechada, places=6,
+                               msg="a palma é rígida: fechar a mão não a encolhe")
+
+    def test_lixo_nao_quebra(self):
+        self.assertEqual(tamanho_palma([]), 0.0)
+        self.assertEqual(escolher_mao([[], hand_landmarks(True)]), 1)
+
+
+# --- suavização do movimento ----------------------------------------------
+
+class Suavizacao(unittest.TestCase):
+    """O filtro 1€: tira tremor parado, mas não atrasa movimento de verdade."""
+
+    def test_tremor_parado_e_reduzido(self):
+        from gestures import OneEuro
+        f = OneEuro()
+        t = 0.0
+        entrada, saida = [], []
+        for i in range(30):
+            # Mão "parada" com tremor de ±0,01 (o que a câmera entrega).
+            v = 0.5 + (0.01 if i % 2 else -0.01)
+            entrada.append(v)
+            saida.append(f(v, t))
+            t += 1 / 24
+        # Variação ponta a ponta, depois do filtro assentar.
+        amp_entrada = max(entrada[10:]) - min(entrada[10:])
+        amp_saida = max(saida[10:]) - min(saida[10:])
+        self.assertLess(amp_saida, amp_entrada / 3,
+                        f"tremor mal filtrado: {amp_saida:.4f} vs {amp_entrada:.4f}")
+
+    def test_movimento_rapido_nao_fica_para_tras(self):
+        from gestures import OneEuro
+        f = OneEuro()
+        t = 0.0
+        pos = 0.2
+        for _ in range(20):          # varre o quadro depressa
+            pos += 0.03
+            saida = f(pos, t)
+            t += 1 / 24
+        # No fim do movimento, o filtro tem de estar colado na mão.
+        self.assertLess(abs(saida - pos), 0.02,
+                        f"atraso grande demais: {abs(saida - pos):.4f}")
+
+    def test_mao_sumindo_zera_o_filtro(self):
+        # Sem zerar, ao voltar em outro ponto o cursor "desliza" do lugar
+        # antigo até o novo, como se a mão tivesse viajado.
+        rec = HandGestures(mirror=False)
+        feed(rec, 0.0, still(POSE_OPEN, ARM_HOLD + 0.3))
+        feed(rec, AFTER_ARM, still(POSE_POINT, 0.2, x=0.3, y=0.3))
+        rec.update(AFTER_ARM + 5.0, None)
+        evs = feed(rec, AFTER_ARM + 6.0, still(POSE_POINT, 0.2, x=0.8, y=0.8))
+        passos = [e for e in evs if e["name"] == "move"]
+        self.assertFalse(any(abs(p["dx"]) > 0.2 for p in passos),
+                         "salto do filtro virou movimento do cursor")
 
 
 if __name__ == "__main__":

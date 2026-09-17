@@ -34,6 +34,11 @@ Item {
     // Modo fantoche: o avatar espelha suas expressões em tempo real (serve
     // pra calibrar as emoções). Só tem efeito com a câmera ligada.
     property bool puppetMode: false
+    // Qual webcam usar (índice do /dev/videoN). Trocar reinicia o rastreador.
+    property int cameraDevice: 0
+    // Câmeras de captura encontradas: [{ index, name, label, path }].
+    property var cameraList: []
+
     // Estado do rastreamento facial (escrito pelo FaceTrackService).
     property string faceStatus: ""
     property int faceOwner: -1              // 1 dono, 0 outro, -1 sem/indefinido
@@ -54,6 +59,12 @@ Item {
     // opt-in — só faz sentido com o controle por gesto ligado, e custa um
     // JPEG por quadro enquanto há mão no quadro.
     property bool gesturePreview: false
+    // Onde os avisos de gesto aparecem na tela: canto ou centro de uma das
+    // bordas. Eles acompanham a mão, não o widget — quem usa gesto costuma
+    // estar de longe, e o aviso precisa cair onde os olhos já estão.
+    property string gesturePosition: "bottom-center"
+    // Em qual monitor. "" = o mesmo que o widget usa.
+    property string gestureMonitor: ""
     // Acenar pra webcam faz o Jorginho aparecer e passar a ouvir. Ligado por
     // padrão (é o comportamento que já existia), mas desligável: com a câmera
     // ativa o dia todo, um gesto qualquer na frente dela pode trazer o
@@ -281,7 +292,10 @@ Item {
                 if (v.puppetMode !== undefined) root.puppetMode = v.puppetMode;
                 if (v.gesturesEnabled !== undefined) root.gesturesEnabled = v.gesturesEnabled;
                 if (v.gesturePreview !== undefined) root.gesturePreview = v.gesturePreview;
+                if (v.gesturePosition !== undefined) root.gesturePosition = v.gesturePosition;
+                if (v.gestureMonitor !== undefined) root.gestureMonitor = v.gestureMonitor;
                 if (v.waveGreetEnabled !== undefined) root.waveGreetEnabled = v.waveGreetEnabled;
+                if (v.cameraDevice !== undefined) root.cameraDevice = v.cameraDevice;
             }
         });
     }
@@ -302,7 +316,10 @@ Item {
                 puppetMode: root.puppetMode,
                 gesturesEnabled: root.gesturesEnabled,
                 gesturePreview: root.gesturePreview,
-                waveGreetEnabled: root.waveGreetEnabled
+                gesturePosition: root.gesturePosition,
+                gestureMonitor: root.gestureMonitor,
+                waveGreetEnabled: root.waveGreetEnabled,
+                cameraDevice: root.cameraDevice
             }
         }, null);
     }

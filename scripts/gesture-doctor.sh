@@ -55,6 +55,8 @@ if command -v fuser >/dev/null 2>&1 && fuser /dev/video0 >/dev/null 2>&1; then
 fi
 
 echo "Câmera: ${TEAMWORK_FACE_CAMERA:-0}   (Ctrl+C encerra)"
+echo "  (outra webcam? TEAMWORK_FACE_CAMERA=2 ./scripts/gesture-doctor.sh —"
+echo "   veja os índices com: python3 apps/widget/services/cameras.py)"
 echo "Mão ABERTA um instante arma; deslize move a área de trabalho;"
 echo "fechar a mão pega a janela e abrir solta;"
 echo "polegar+indicador+médio movem o cursor, e fechar o polegar clica."
