@@ -16,6 +16,9 @@ Protocolo (uma linha por comando, em stdin):
     GRAB              pressiona Super + botão esquerdo (pega a janela)
     PRESS             pressiona só o botão esquerdo (clique comum)
     MOVE <dx> <dy>    move o ponteiro (unidades do dispositivo, relativas)
+    SCROLL <n>        gira a roda: n positivo rola para CIMA, como a roda
+                      de um mouse de verdade
+    SCROLL_H <n>      gira a roda horizontal: n positivo rola para a DIREITA
     RELEASE           solta o que estiver pressionado
     QUIT              encerra
 Sem comando nenhum por alguns segundos, o que estiver pressionado é solto
@@ -59,6 +62,34 @@ class Pointer:
             self.sink.write(self.c.EV_REL, self.c.REL_X, int(dx))
         if dy:
             self.sink.write(self.c.EV_REL, self.c.REL_Y, int(dy))
+        self.sink.syn()
+
+    def scroll(self, passos):
+        """Gira a roda vertical. Positivo rola para cima, como no mouse."""
+        self._roda(passos, self.c.REL_WHEEL_HI_RES, self.c.REL_WHEEL)
+
+    def scroll_h(self, passos):
+        """Gira a roda horizontal. Positivo rola para a direita."""
+        self._roda(passos, self.c.REL_HWHEEL_HI_RES, self.c.REL_HWHEEL)
+
+    def _roda(self, passos, codigo_fino, codigo_grosso):
+        """Emite os dois eventos da roda, fino e grosso.
+
+        `*_HI_RES` (em 1/120 de degrau) é o que dá rolagem fina em quem o
+        entende, e o degrau inteiro é o que aplicativos antigos esperam.
+        Mandar só o fino faz a página não se mexer neles; mandar só o grosso
+        rola aos trancos.
+        """
+        passos = int(passos)
+        if not passos:
+            return
+        self.sink.write(self.c.EV_REL, codigo_fino, passos)
+        # Trunca em direção ao zero, não para baixo: `//` mandaria -1 degrau
+        # para qualquer migalha negativa, e a página andava sozinha ao rolar
+        # devagar para a esquerda ou para cima.
+        degraus = int(passos / 120)
+        if degraus:
+            self.sink.write(self.c.EV_REL, codigo_grosso, degraus)
         self.sink.syn()
 
     def grab(self):
@@ -133,6 +164,16 @@ def run_commands(lines, pointer, on_idle=None):
                 pointer.grab()
             elif cmd == "PRESS":
                 pointer.press()
+            elif cmd == "SCROLL":
+                try:
+                    pointer.scroll(float(parts[1]))
+                except (IndexError, ValueError):
+                    continue
+            elif cmd == "SCROLL_H":
+                try:
+                    pointer.scroll_h(float(parts[1]))
+                except (IndexError, ValueError):
+                    continue
             elif cmd == "MOVE":
                 try:
                     pointer.move(float(parts[1]), float(parts[2]))
@@ -154,7 +195,9 @@ def main():
         return 1
 
     caps = {
-        e.EV_REL: [e.REL_X, e.REL_Y],
+        e.EV_REL: [e.REL_X, e.REL_Y,
+                   e.REL_WHEEL, e.REL_WHEEL_HI_RES,
+                   e.REL_HWHEEL, e.REL_HWHEEL_HI_RES],
         e.EV_KEY: [e.BTN_LEFT, e.KEY_LEFTMETA],
     }
     try:

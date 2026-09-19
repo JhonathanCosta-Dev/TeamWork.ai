@@ -62,6 +62,7 @@ Rectangle {
         ]
 
         readonly property color tint: root.pose === "fist" ? Theme.warning
+                                    : root.pose === "scroll" ? Theme.accentAlt
                                     : root.pose === "click" ? Theme.info
                                     : root.pose === "point" ? Theme.success
                                     : root.pose === "open" ? Theme.accent
@@ -136,6 +137,12 @@ Rectangle {
                     return "procurando sua mão…";
                 if (root.store.dragging)
                     return "segurando a janela";
+                if (root.store.scrolling)
+                    return root.store.lastGesture.length > 0
+                        ? root.store.lastGesture
+                        : "rolando — mova a mão pro lado que quer rolar";
+                if (root.pose === "scroll")
+                    return "quatro dedos — rola a página";
                 if (root.store.clicking)
                     return "clique pressionado — abra o polegar pra soltar";
                 if (root.store.pointing)
@@ -153,6 +160,7 @@ Rectangle {
                 return "mão indefinida — abra bem os dedos";
             }
             color: root.store.dragging ? Theme.warning
+                 : root.store.scrolling ? Theme.accentAlt
                  : root.store.clicking ? Theme.info
                  : root.store.pointing ? Theme.success
                  : root.store.gestureArmed ? Theme.accent : Theme.textSecondary

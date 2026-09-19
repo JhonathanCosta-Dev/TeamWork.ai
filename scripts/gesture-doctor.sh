@@ -59,7 +59,9 @@ echo "  (outra webcam? TEAMWORK_FACE_CAMERA=2 ./scripts/gesture-doctor.sh —"
 echo "   veja os índices com: python3 apps/widget/services/cameras.py)"
 echo "Mão ABERTA um instante arma; deslize move a área de trabalho;"
 echo "fechar a mão pega a janela e abrir solta;"
-echo "polegar+indicador+médio movem o cursor, e fechar o polegar clica."
+echo "polegar+indicador+médio movem o cursor, e fechar o polegar clica;"
+echo "4 dedos com o polegar recolhido rolam a página (o primeiro movimento"
+echo "escolhe se a rolagem é vertical ou horizontal)."
 echo
 
 # O tracker fala por stdout; aqui só se traduz o que interessa ao gesto. O
@@ -76,7 +78,8 @@ ACTIONS = {
 
 }
 POSES = {"open": "aberta", "fist": "punho", "point": "ponteiro",
-         "click": "ponteiro + polegar fechado", "other": "indefinida"}
+         "click": "ponteiro + polegar fechado", "scroll": "4 dedos (rolagem)",
+         "other": "indefinida"}
 
 for line in sys.stdin:
     line = line.strip()
@@ -132,6 +135,18 @@ for line in sys.stdin:
             print("CLIQUE  — polegar fechado: botao pressionado", flush=True)
         elif name == "click_up":
             print("soltou o clique", flush=True)
+        elif name == "scroll_start":
+            print("ROLAGEM — 4 dedos: mova a mao pro lado que quer rolar",
+                  flush=True)
+        elif name == "scroll_axis":
+            # O eixo trava no primeiro movimento e vale ate soltar a pose.
+            print("  eixo travado: %s"
+                  % ("horizontal" if ev.get("axis") == "h" else "vertical"),
+                  flush=True)
+        elif name == "scroll":
+            pass   # contínuo
+        elif name == "scroll_end":
+            print("parou de rolar", flush=True)
         elif name == "move":
             pass   # contínuo
         elif name == "point_end":

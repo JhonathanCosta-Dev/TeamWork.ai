@@ -21,6 +21,8 @@ class Codes:
     """Os códigos que o evdev exporta, com nomes iguais."""
     EV_REL, EV_KEY, EV_SYN = 2, 1, 0
     REL_X, REL_Y = 0, 1
+    REL_WHEEL, REL_WHEEL_HI_RES = 8, 11
+    REL_HWHEEL, REL_HWHEEL_HI_RES = 6, 12
     BTN_LEFT, KEY_LEFTMETA = 272, 125
 
 
@@ -181,6 +183,91 @@ class Move(unittest.TestCase):
         sink, p = novo()
         p.move(3.7, -2.2)
         self.assertEqual(sink.rels(), {Codes.REL_X: 3, Codes.REL_Y: -2})
+
+
+class Rolagem(unittest.TestCase):
+    """A roda tem duas resoluções, e as duas precisam sair."""
+
+    def test_emite_fino_e_grosso(self):
+        # Só o fino: aplicativos antigos não rolam. Só o grosso: rola aos
+        # trancos. Os dois juntos atendem a todo mundo.
+        sink, p = novo()
+        p.scroll(240)
+        rels = sink.rels()
+        self.assertEqual(rels.get(Codes.REL_WHEEL_HI_RES), 240)
+        self.assertEqual(rels.get(Codes.REL_WHEEL), 2)     # 240 = 2 degraus
+
+    def test_movimento_pequeno_so_tem_o_fino(self):
+        # Meio degrau ainda rola em quem entende alta resolução, e não
+        # inventa um degrau inteiro em quem não entende.
+        sink, p = novo()
+        p.scroll(60)
+        rels = sink.rels()
+        self.assertEqual(rels.get(Codes.REL_WHEEL_HI_RES), 60)
+        self.assertIsNone(rels.get(Codes.REL_WHEEL))
+
+    def test_para_baixo_e_negativo(self):
+        sink, p = novo()
+        p.scroll(-240)
+        self.assertEqual(sink.rels().get(Codes.REL_WHEEL_HI_RES), -240)
+        self.assertEqual(sink.rels().get(Codes.REL_WHEEL), -2)
+
+    def test_zero_nao_emite_nada(self):
+        sink, p = novo()
+        p.scroll(0)
+        self.assertEqual(sink.events, [])
+
+    def test_protocolo_da_rolagem(self):
+        sink, p = novo()
+        run_commands(["SCROLL 120", "SCROLL -120", "QUIT"], p)
+        finos = [v for (t, c, v) in sink.events
+                 if t == Codes.EV_REL and c == Codes.REL_WHEEL_HI_RES]
+        self.assertEqual(finos, [120, -120])
+
+    def test_meio_degrau_negativo_nao_vira_degrau_inteiro(self):
+        # `//` arredonda para baixo: -60 // 120 = -1. Rolar devagar para baixo
+        # mandava um degrau cheio a cada migalha, e a página fugia sozinha em
+        # quem não entende alta resolução.
+        sink, p = novo()
+        p.scroll(-60)
+        self.assertEqual(sink.rels().get(Codes.REL_WHEEL_HI_RES), -60)
+        self.assertIsNone(sink.rels().get(Codes.REL_WHEEL))
+
+    def test_horizontal_usa_a_outra_roda(self):
+        # Rolar de lado no eixo vertical deixaria a página parada: são códigos
+        # diferentes, e quem lê um não lê o outro.
+        sink, p = novo()
+        p.scroll_h(240)
+        rels = sink.rels()
+        self.assertEqual(rels.get(Codes.REL_HWHEEL_HI_RES), 240)
+        self.assertEqual(rels.get(Codes.REL_HWHEEL), 2)
+        self.assertIsNone(rels.get(Codes.REL_WHEEL_HI_RES))
+        self.assertIsNone(rels.get(Codes.REL_WHEEL))
+
+    def test_horizontal_para_a_esquerda_e_negativo(self):
+        sink, p = novo()
+        p.scroll_h(-240)
+        self.assertEqual(sink.rels().get(Codes.REL_HWHEEL_HI_RES), -240)
+        self.assertEqual(sink.rels().get(Codes.REL_HWHEEL), -2)
+
+    def test_protocolo_da_rolagem_horizontal(self):
+        sink, p = novo()
+        run_commands(["SCROLL_H 120", "SCROLL_H -120", "QUIT"], p)
+        finos = [v for (t, c, v) in sink.events
+                 if t == Codes.EV_REL and c == Codes.REL_HWHEEL_HI_RES]
+        self.assertEqual(finos, [120, -120])
+
+    def test_horizontal_nao_mexe_no_cursor(self):
+        sink, p = novo()
+        p.scroll_h(120)
+        self.assertIsNone(sink.rels().get(Codes.REL_X))
+        self.assertIsNone(sink.rels().get(Codes.REL_Y))
+
+    def test_rolar_nao_mexe_no_cursor(self):
+        sink, p = novo()
+        p.scroll(120)
+        self.assertIsNone(sink.rels().get(Codes.REL_X))
+        self.assertIsNone(sink.rels().get(Codes.REL_Y))
 
 
 class Protocolo(unittest.TestCase):

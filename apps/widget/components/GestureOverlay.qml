@@ -27,6 +27,7 @@ Item {
                                     || root.store.gestureArmed
                                     || root.store.dragging
                                     || root.store.pointing
+                                    || root.store.scrolling
                                     || root.store.lastGesture.length > 0
 
     /// Altura que a janela precisa ter agora (o shell usa isto).
@@ -77,6 +78,7 @@ Item {
                 height: 8
                 radius: 4
                 color: root.store.dragging ? Theme.warning
+                     : root.store.scrolling ? Theme.accentAlt
                      : root.store.clicking ? Theme.info
                      : root.store.pointing ? Theme.success
                      : root.store.gestureArmed ? Theme.accent : Theme.textDisabled
@@ -94,6 +96,11 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.store.dragging
                       ? "segurando a janela — abra a mão pra soltar"
+                      : root.store.scrolling
+                        // lastGesture diz o eixo travado ("rolando de lado");
+                        // antes do primeiro movimento ainda não há eixo.
+                        ? (root.store.lastGesture.length > 0
+                           ? root.store.lastGesture : "rolando")
                       : root.store.clicking
                         ? "segurando o clique"
                       : root.store.pointing

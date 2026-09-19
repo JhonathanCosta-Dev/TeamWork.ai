@@ -126,6 +126,12 @@ Item {
                 const g = JSON.parse(line.slice(8));
                 if (g.name === "drag" || g.name === "move")
                     root.store.handDrag(g.dx ?? 0, g.dy ?? 0);
+                else if (g.name === "scroll")
+                    root.store.handScroll(g.axis ?? "v", g.d ?? 0);
+                else if (g.name === "scroll_axis")
+                    // O segundo campo do sinal genérico é livre; aqui ele
+                    // leva o eixo travado ("v" ou "h") em vez da pose.
+                    root.store.gestureDetected(g.name, g.axis ?? "v");
                 else
                     root.store.gestureDetected(g.name ?? "", g.pose ?? "");
             } catch (e) {

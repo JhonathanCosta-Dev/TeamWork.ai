@@ -231,8 +231,11 @@ ShellRoot {
         // Monitor escolhido em Config; vazio = o mesmo do widget, e se aquele
         // também estiver vazio (ou desconectado), o primeiro da lista.
         screen: {
-            const alvo = appStore.gestureMonitor !== ""
-                         ? appStore.gestureMonitor : appStore.monitorName;
+            // "@ativa": segue a tela em uso. Se o niri ainda não respondeu,
+            // cai no comportamento de antes em vez de sumir da tela.
+            const escolha = appStore.gestureMonitor === appStore.telaAtiva
+                            ? telaEmUso.name : appStore.gestureMonitor;
+            const alvo = escolha !== "" ? escolha : appStore.monitorName;
             if (alvo !== "") {
                 for (const s of Quickshell.screens)
                     if (s.name === alvo)
@@ -274,6 +277,19 @@ ShellRoot {
             anchors.fill: parent
             store: appStore
         }
+    }
+
+    // Só consulta o compositor enquanto a opção está escolhida E há algo na
+    // tela: seguir a tela ativa não pode custar CPU quando ninguém está
+    // gesticulando.
+    ActiveMonitor {
+        id: telaEmUso
+        // Enquanto o aviso está na tela, e uma vez na inicialização — sem
+        // essa primeira consulta, o primeiro gesto do dia apareceria na tela
+        // padrão e só depois pularia para a certa. A condição se desliga
+        // sozinha assim que o nome chega.
+        active: appStore.gestureMonitor === appStore.telaAtiva
+                && (gestureLayer.visible || telaEmUso.name === "")
     }
 
     // Controle externo: `qs ipc call teamwork toggle` / `... expand`.

@@ -370,7 +370,13 @@ def main():
         now = time.time()
         # Em modo econômico (avatar fora da tela e sem gestos), o laço inteiro
         # desacelera — é o que transforma o trabalho poupado em CPU poupada.
-        comandando = gestures.pointing or gestures.dragging
+        # A rolagem conta como comandar tanto quanto o cursor: ela também é
+        # movimento contínuo da mão virando movimento na tela, e a fluidez
+        # dela é a taxa de amostragem. Ficar de fora prendia a rolagem em
+        # 12 Hz enquanto cursor e arrasto iam a 30 — menos da metade das
+        # amostras, e era só ela que andava aos trancos.
+        comandando = (gestures.pointing or gestures.dragging
+                      or gestures.scrolling)
         if comandando:
             alvo_hz = PROCESS_HZ_FAST
         elif _cmd["face_full"] or _cmd["hands"]:

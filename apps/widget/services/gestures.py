@@ -16,6 +16,8 @@ câmera (ver `escolher_mao`): é a que foi levantada de propósito, enquanto a
 outra costuma estar no teclado.
 
 Saída: eventos — `arm`, `disarm`, `swipe_left/right/up/down` (com a pose), o
+trio da rolagem (`scroll_start`, `scroll_axis`, `scroll`, `scroll_end` — a
+rolagem trava no eixo em que começou, como num trackpad), o
 trio do arrasto (`grab`, `drag`, `release`) e os do ponteiro: `point_start`,
 `move`, `point_end` (a mão de ponteiro andando) mais `click_down`/`click_up`
 (o polegar fechando e abrindo, que é o botão do mouse). Quem decide o que cada um faz é a
@@ -87,6 +89,18 @@ PREDICAO_MAXIMA = 0.05
 # Deslocamento mínimo, por quadro, para render um evento de arrasto. Abaixo
 # disso é tremor da mão parada, e mandar isso adiante faria a janela vibrar.
 DRAG_MIN_STEP = 0.0025
+# Mesma ideia para a rolagem, um pouco mais folgada: a roda do mouse anda em
+# degraus, e tremor virando rolagem faz a página tremer sozinha.
+SCROLL_MIN_STEP = 0.004
+# Deslocamento acumulado que decide se a rolagem é vertical ou horizontal.
+# Antes de chegar nisso, nada rola: é o intervalo em que o gesto ainda não
+# disse para onde vai.
+SCROLL_AXIS_LOCK = 0.02
+# Quanto tempo a rolagem sobrevive a quadros fora da pose. Um dedo lido errado
+# por um quadro é comum; sem esta folga ele encerrava o gesto, e recomeçar
+# custava a zona morta da trava de eixo inteira — a página travava no meio do
+# movimento. Curto de propósito: abrir o polegar continua parando na hora.
+SCROLL_HOLD_GRACE = 0.15
 # Sem gesto nenhum por este tempo: desarma (e some o indicador na tela).
 IDLE_DISARM = 3.0
 # Sem mão no quadro por este tempo: esquece a trajetória acumulada.
@@ -116,6 +130,10 @@ POSE_FIST = "fist"
 # clique do mouse.
 POSE_POINT = "point"      # polegar aberto  → move o cursor
 POSE_CLICK = "click"      # polegar fechado → cursor + botão pressionado
+# Quatro dedos de pé com o polegar recolhido: rolagem. A mão aberta de verdade
+# tem o polegar PARA FORA — é só isso que separa as duas, e é o bastante
+# porque recolher o polegar contra a palma é um gesto deliberado.
+POSE_SCROLL = "scroll"
 POSE_OTHER = "other"
 
 
@@ -222,7 +240,7 @@ def classify_pose(landmarks):
             folded += 1
 
     if extended >= 3:
-        return POSE_OPEN
+        return POSE_OPEN if thumb_out else POSE_SCROLL
     if folded >= 3:
         return POSE_FIST
     # Indicador e médio de pé, os outros dois dobrados: mão de ponteiro. Vem
@@ -324,6 +342,17 @@ class HandGestures:
         self.dragging = False
         # Ponteiro livre: mão de ponteiro move só o cursor.
         self.pointing = False
+        # Rolagem: quatro dedos com o polegar recolhido.
+        self.scrolling = False
+        # Eixo travado da rolagem: None enquanto o gesto não se decide, depois
+        # "v" ou "h" até a mão sair da pose. Travar é o que impede a página de
+        # fugir na diagonal — a mão nunca anda reto, e sem trava cada tremida
+        # vira rolagem no outro eixo.
+        self._scroll_axis = None
+        self._scroll_origem = None
+        # Instante do primeiro quadro fora da pose durante uma rolagem, ou
+        # None se a mão está na pose. É a folga contra leitura ruim.
+        self._scroll_fora_desde = None
         # Botão do polegar pressionado (dentro do modo ponteiro).
         self.clicking = False
         self._drag_last = None     # (x, y) do quadro anterior
@@ -335,6 +364,13 @@ class HandGestures:
         events = []
 
         if hand is None:
+            if self.scrolling and now - self._last_seen > HAND_LOST:
+                self.scrolling = False
+                self._drag_last = None
+                self._scroll_axis = None
+                self._scroll_origem = None
+                self._scroll_fora_desde = None
+                events.append({"name": "scroll_end"})
             if self.pointing and now - self._last_seen > HAND_LOST:
                 if self.clicking:
                     self.clicking = False
@@ -416,6 +452,16 @@ class HandGestures:
             if self.pointing:
                 self.pointing = False
                 events.append({"name": "point_end"})
+            # Relaxar a mão depois de rolar vira punho: é o jeito mais comum
+            # de terminar uma rolagem. Este bloco fica ACIMA do da rolagem e
+            # devolve aqui mesmo, então é ele quem tem de encerrá-la — senão
+            # `scrolling` ficava ligado para sempre.
+            if self.scrolling:
+                self.scrolling = False
+                self._scroll_axis = None
+                self._scroll_origem = None
+                self._scroll_fora_desde = None
+                events.append({"name": "scroll_end"})
             self.dragging = True
             self._drag_last = (sx, sy)
             self._last_activity = now
@@ -444,6 +490,61 @@ class HandGestures:
                     self._last_activity = now
                     events.append({"name": "drag",
                                    "dx": round(dx, 4), "dy": round(dy, 4)})
+            return events
+
+        # ---- rolagem: quatro dedos, no eixo em que o gesto começar -------
+        if pose == POSE_SCROLL:
+            self._scroll_fora_desde = None
+            if not self.scrolling:
+                self.scrolling = True
+                self._drag_last = (sx, sy)
+                self._scroll_origem = (sx, sy)
+                self._scroll_axis = None
+                self._last_activity = now
+                self._track = []
+                self._reset_hold()
+                events.append({"name": "scroll_start"})
+                return events
+
+            if self._drag_last is None or self._scroll_origem is None:
+                return events
+
+            # Enquanto o gesto não andou o bastante para dizer para onde vai,
+            # nada rola. Decidido o eixo, ele vale até a mão sair da pose.
+            if self._scroll_axis is None:
+                ax = abs(sx - self._scroll_origem[0])
+                ay = abs(sy - self._scroll_origem[1])
+                if max(ax, ay) < SCROLL_AXIS_LOCK:
+                    return events
+                self._scroll_axis = "h" if ax > ay else "v"
+                events.append({"name": "scroll_axis", "axis": self._scroll_axis})
+                # Sem `return`: o movimento que escolheu o eixo já rola neste
+                # mesmo quadro. Gastar um quadro só para anunciar a escolha
+                # era mais um engasgo no começo de cada gesto.
+
+            self._passo_rolagem(now, sx, sy, events)
+            return events
+
+        if self.scrolling:
+            # Um quadro fora da pose quase sempre é leitura ruim, não a mão
+            # saindo. Espera a folga antes de desmontar o gesto: reconstruir a
+            # trava de eixo no meio do movimento é o que dava as travadas.
+            if self._scroll_fora_desde is None:
+                self._scroll_fora_desde = now
+            if now - self._scroll_fora_desde < SCROLL_HOLD_GRACE:
+                # E a rolagem continua durante a folga. Quem piscou foi a
+                # classificação da pose; a posição da mão nesse quadro é boa,
+                # e congelar nela deixava a página andando aos solavancos.
+                self._passo_rolagem(now, sx, sy, events)
+                return events
+            self.scrolling = False
+            self._scroll_fora_desde = None
+            self._drag_last = None
+            self._scroll_axis = None
+            self._scroll_origem = None
+            self._last_activity = now
+            self._track = []
+            events.append({"name": "scroll_end"})
             return events
 
         # ---- ponteiro: a mão vira mouse; o polegar, o botão --------------
@@ -512,11 +613,30 @@ class HandGestures:
         self.dragging = False
         self.pointing = False
         self.clicking = False
+        self.scrolling = False
+        self._scroll_axis = None
+        self._scroll_origem = None
+        self._scroll_fora_desde = None
         self._drag_last = None
         self._track = []
         self._reset_hold()
 
     # -- interno -----------------------------------------------------------
+
+    def _passo_rolagem(self, now, sx, sy, events):
+        """Emite um passo de rolagem no eixo travado, se houver o que rolar."""
+        if self._scroll_axis is None or self._drag_last is None:
+            return
+        if self._scroll_axis == "v":
+            d = sy - self._drag_last[1]
+        else:
+            d = sx - self._drag_last[0]
+        if abs(d) < SCROLL_MIN_STEP:
+            return
+        self._drag_last = (sx, sy)
+        self._last_activity = now
+        events.append({"name": "scroll",
+                       "axis": self._scroll_axis, "d": round(d, 4)})
 
     def _reset_hold(self):
         self._hold_pose = None

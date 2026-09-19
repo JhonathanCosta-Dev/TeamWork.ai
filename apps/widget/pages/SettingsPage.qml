@@ -737,7 +737,7 @@ Column {
         visible: root.store.gesturesEnabled
 
         Text {
-            text: "Onde mostrar os avisos de gesto"
+            text: "Onde mostrar os avisos de gesto e o espelho da mão"
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeSmall
             font.family: Theme.fontFamily
@@ -849,6 +849,36 @@ Column {
                         }
                     }
 
+                    Rectangle {
+                        id: ativaChip
+                        readonly property bool atual:
+                            root.store.gestureMonitor === root.store.telaAtiva
+
+                        width: ativaText.implicitWidth + 14
+                        height: 22
+                        radius: Theme.radiusPill
+                        color: ativaChip.atual ? Qt.alpha(Theme.accent, 0.25)
+                                               : Theme.surface
+                        border.width: 1
+                        border.color: ativaChip.atual ? Theme.accent : Theme.border
+                        Text {
+                            id: ativaText
+                            anchors.centerIn: parent
+                            text: "a que estou usando"
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeTiny
+                            font.family: Theme.fontFamily
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.store.gestureMonitor = root.store.telaAtiva;
+                                root.store.saveUiSettings();
+                            }
+                        }
+                    }
+
                     Repeater {
                         model: root.screens
                         delegate: Rectangle {
@@ -885,6 +915,18 @@ Column {
                 }
             }
         }
+
+        Text {
+            visible: root.store.gestureMonitor === root.store.telaAtiva
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Segue a tela que o niri considera em uso. Para ela "
+                  + "acompanhar o ponteiro mesmo sem clicar, ligue "
+                  + "focus-follows-mouse na config do niri."
+            color: Theme.textDisabled
+            font.pixelSize: Theme.fontSizeTiny
+            font.family: Theme.fontFamily
+        }
     }
 
     // Vocabulário de gestos. Fixo por enquanto — a tabela existe para você
@@ -912,6 +954,7 @@ Column {
                     { g: "✋ ←", a: "coluna anterior" },
                     { g: "✋ ↑", a: "maximizar" },
                     { g: "✋ ↓", a: "tela cheia" },
+                    { g: "✌ 4 dedos ↑↓←→", a: "rola a página; o primeiro movimento escolhe o eixo (polegar recolhido)" },
                     { g: "☝ 3 dedos", a: "move o cursor do mouse" },
                     { g: "☝ + polegar", a: "fecha o polegar = clique (segure pra arrastar)" },
                     { g: "✊ fecha", a: "pega a janela sob o cursor" },

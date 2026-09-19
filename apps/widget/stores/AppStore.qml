@@ -64,6 +64,10 @@ Item {
     // estar de longe, e o aviso precisa cair onde os olhos já estão.
     property string gesturePosition: "bottom-center"
     // Em qual monitor. "" = o mesmo que o widget usa.
+    // Tela dos avisos de gesto e do espelho da mão. "" = a mesma do widget,
+    // TELA_ATIVA = a que o compositor considera em uso, ou o nome da saída
+    // ("DP-2"). O prefixo "@" não colide com nome de saída nenhum.
+    readonly property string telaAtiva: "@ativa"
     property string gestureMonitor: ""
     // Acenar pra webcam faz o Jorginho aparecer e passar a ouvir. Ligado por
     // padrão (é o comportamento que já existia), mas desligável: com a câmera
@@ -86,6 +90,8 @@ Item {
     property bool pointing: false
     // Polegar fechado: botão do mouse pressionado (clicar / segurar o clique).
     property bool clicking: false
+    // Rolando a página com os quatro dedos.
+    property bool scrolling: false
 
     signal gestureDetected(string name, string pose)
     /// Movimento contínuo da mão, em fração do quadro desde o último aviso.
@@ -93,6 +99,10 @@ Item {
     /// Serve ao arrasto (mão fechada) e ao ponteiro livre (dois dedos) — quem
     /// sabe a diferença é o estado, não o sinal.
     signal handDrag(real dx, real dy)
+    /// Rolagem em curso: quanto a mão andou na vertical desde o último aviso.
+    // `eixo` é "v" ou "h": a rolagem trava no eixo em que o gesto começou,
+    // como num trackpad. `d` é o avanço da mão nesse eixo, em fração do quadro.
+    signal handScroll(string eixo, real d)
 
     // Emitido quando o usuário pede pra cadastrar o rosto (o FaceTrackService
     // escuta e manda ENROLL pro tracker).

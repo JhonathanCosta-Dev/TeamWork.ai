@@ -7,6 +7,8 @@ import unittest
 
 from gestures import (
     ARM_HOLD,
+    POSE_SCROLL,
+    SCROLL_AXIS_LOCK,
     thumb_ratio,
     escolher_mao,
     tamanho_palma,
@@ -14,6 +16,7 @@ from gestures import (
     POSE_FIST,
     POSE_OPEN,
     POSE_CLICK,
+    POSE_OTHER,
     POSE_POINT,
     classify_pose,
     SWIPE_COOLDOWN,
@@ -38,6 +41,20 @@ def hand_landmarks(extended):
         # Estendido: ponta bem além da base. Dobrado: ponta aquém dela.
         pts[tip] = (bx, by - 0.25) if extended else (bx, by + 0.14)
     pts[4] = (0.35, 0.85)             # polegar (ignorado pelo classificador)
+    return pts
+
+
+def hand_scroll():
+    """Quatro dedos de pé com o polegar recolhido contra a palma."""
+    pts = hand_landmarks(True)
+    pts[4] = (0.52, 0.80)
+    return pts
+
+
+def hand_aberta():
+    """Mão aberta de verdade: os quatro dedos E o polegar para fora."""
+    pts = hand_landmarks(True)
+    pts[4] = (0.22, 0.83)
     return pts
 
 
@@ -552,6 +569,170 @@ class Profundidade(unittest.TestCase):
         longe = afastar(hand_landmarks(True), 0.5)
         com_z = [(x, y, 0.4) for (x, y) in longe]
         self.assertAlmostEqual(tamanho_palma(longe), tamanho_palma(com_z), places=6)
+
+
+# --- rolagem com quatro dedos ---------------------------------------------
+
+class Rolagem(unittest.TestCase):
+    def armado(self):
+        rec = HandGestures(mirror=False)
+        feed(rec, 0.0, still(POSE_OPEN, ARM_HOLD + 0.3))
+        assert rec.armed
+        return rec
+
+    def test_polegar_separa_rolagem_de_mao_aberta(self):
+        # Os quatro dedos são iguais nas duas; o que muda é o polegar. Sem
+        # essa distinção, armar a mão já começaria a rolar a página.
+        self.assertEqual(classify_pose(hand_aberta()), POSE_OPEN)
+        self.assertEqual(classify_pose(hand_scroll()), POSE_SCROLL)
+
+    def test_quatro_dedos_comecam_a_rolar(self):
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, still(POSE_SCROLL, 0.2))
+        self.assertEqual(names(evs)[0], "scroll_start")
+        self.assertTrue(rec.scrolling)
+
+    def test_descer_a_mao_rola(self):
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, slide_v(POSE_SCROLL, 0.4, 0.75, steps=5))
+        passos = [e for e in evs if e["name"] == "scroll"]
+        self.assertTrue(passos)
+        self.assertTrue(all(p["axis"] == "v" for p in passos))
+        self.assertTrue(all(p["d"] > 0 for p in passos), "todos para baixo")
+
+    def test_subir_a_mao_rola_ao_contrario(self):
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, slide_v(POSE_SCROLL, 0.75, 0.4, steps=5))
+        passos = [e for e in evs if e["name"] == "scroll"]
+        self.assertTrue(passos)
+        self.assertTrue(all(p["axis"] == "v" for p in passos))
+        self.assertTrue(all(p["d"] < 0 for p in passos), "todos para cima")
+
+    def test_mao_para_a_direita_rola_de_lado(self):
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, slide(POSE_SCROLL, 0.3, 0.8, steps=5))
+        passos = [e for e in evs if e["name"] == "scroll"]
+        self.assertTrue(passos)
+        self.assertTrue(all(p["axis"] == "h" for p in passos))
+        self.assertTrue(all(p["d"] > 0 for p in passos), "todos para a direita")
+
+    def test_mao_para_a_esquerda_rola_ao_contrario(self):
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, slide(POSE_SCROLL, 0.8, 0.3, steps=5))
+        passos = [e for e in evs if e["name"] == "scroll"]
+        self.assertTrue(passos)
+        self.assertTrue(all(p["axis"] == "h" for p in passos))
+        self.assertTrue(all(p["d"] < 0 for p in passos), "todos para a esquerda")
+
+    def test_o_eixo_trava_no_que_comecou(self):
+        # A mão nunca anda reto. Sem travar o eixo, cada tremida viraria
+        # rolagem no outro sentido e a página fugia na diagonal.
+        rec = self.armado()
+        # Começa claramente na horizontal...
+        evs = feed(rec, AFTER_ARM, slide(POSE_SCROLL, 0.3, 0.7, steps=4))
+        self.assertEqual(rec._scroll_axis, "h")
+        # ...e depois desce: nada disso pode virar rolagem vertical.
+        evs += feed(rec, AFTER_ARM + 0.5,
+                    slide_v(POSE_SCROLL, 0.4, 0.9, steps=4, x=0.7))
+        passos = [e for e in evs if e["name"] == "scroll"]
+        self.assertTrue(passos)
+        self.assertTrue(all(p["axis"] == "h" for p in passos))
+
+    def test_o_eixo_destrava_quando_o_gesto_recomeca(self):
+        rec = self.armado()
+        feed(rec, AFTER_ARM, slide(POSE_SCROLL, 0.3, 0.7, steps=4))
+        self.assertEqual(rec._scroll_axis, "h")
+        # Abre o polegar (encerra) e volta aos quatro dedos, agora subindo.
+        feed(rec, AFTER_ARM + 0.5, still(POSE_OPEN, 0.5))
+        evs = feed(rec, AFTER_ARM + 1.2, slide_v(POSE_SCROLL, 0.8, 0.3, steps=4))
+        passos = [e for e in evs if e["name"] == "scroll"]
+        self.assertTrue(passos)
+        self.assertTrue(all(p["axis"] == "v" for p in passos))
+
+    def test_tremida_curta_nao_escolhe_eixo_nenhum(self):
+        # Abaixo do limiar de trava, o gesto ainda não disse para onde vai —
+        # e nada pode rolar, ou o ruído da mão escolheria por você.
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, slide_v(POSE_SCROLL, 0.50, 0.505, steps=4))
+        self.assertEqual([e for e in evs if e["name"] == "scroll"], [])
+        self.assertIsNone(rec._scroll_axis)
+
+    def test_mao_parada_nao_rola(self):
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, still(POSE_SCROLL, 0.8))
+        self.assertEqual(names(evs).count("scroll"), 0)
+
+    def test_abrir_o_polegar_encerra(self):
+        rec = self.armado()
+        feed(rec, AFTER_ARM, still(POSE_SCROLL, 0.2))
+        evs = feed(rec, AFTER_ARM + 0.4, still(POSE_OPEN, 0.5))
+        self.assertIn("scroll_end", names(evs))
+        self.assertFalse(rec.scrolling)
+
+    def test_um_quadro_lido_errado_nao_encerra(self):
+        # Um dedo mal lido por um quadro é rotina. Se isso encerrasse o gesto,
+        # recomeçar custaria a zona morta da trava inteira — a página travava
+        # no meio do movimento.
+        rec = self.armado()
+        feed(rec, AFTER_ARM, slide_v(POSE_SCROLL, 0.35, 0.60, steps=4))
+        self.assertEqual(rec._scroll_axis, "v")
+        evs = feed(rec, AFTER_ARM + 0.5, still(POSE_OTHER, 0.06, dt=0.06))
+        self.assertNotIn("scroll_end", names(evs))
+        self.assertTrue(rec.scrolling)
+        self.assertEqual(rec._scroll_axis, "v", "o eixo não pode se perder")
+
+    def test_depois_da_folga_encerra_mesmo(self):
+        rec = self.armado()
+        feed(rec, AFTER_ARM, slide_v(POSE_SCROLL, 0.35, 0.60, steps=4))
+        evs = feed(rec, AFTER_ARM + 0.5, still(POSE_OTHER, 0.5))
+        self.assertIn("scroll_end", names(evs))
+        self.assertFalse(rec.scrolling)
+
+    def test_o_quadro_que_escolhe_o_eixo_ja_rola(self):
+        # Anunciar a escolha sem rolar gastava um quadro — mais um engasgo no
+        # começo de cada gesto.
+        rec = self.armado()
+        evs = feed(rec, AFTER_ARM, slide_v(POSE_SCROLL, 0.35, 0.80, steps=6))
+        nomes = names(evs)
+        i = nomes.index("scroll_axis")
+        self.assertEqual(nomes[i + 1], "scroll")
+        # E o movimento que escolheu o eixo não se perde: ele sai inteiro
+        # nesse primeiro passo, por isso vale ao menos a zona morta da trava.
+        self.assertGreaterEqual(abs(evs[i + 1]["d"]), SCROLL_AXIS_LOCK)
+
+    def test_mao_sumindo_encerra(self):
+        rec = self.armado()
+        feed(rec, AFTER_ARM, still(POSE_SCROLL, 0.2))
+        evs = rec.update(AFTER_ARM + 4.0, None)
+        self.assertIn("scroll_end", names(evs))
+
+    def test_nao_rola_sem_armar(self):
+        rec = HandGestures(mirror=False)
+        evs = feed(rec, 0.0, slide_v(POSE_SCROLL, 0.4, 0.8))
+        self.assertEqual(names(evs), [])
+
+    def test_fechar_a_mao_ao_terminar_encerra_a_rolagem(self):
+        # Relaxar a mão depois de rolar vira punho — é o jeito mais comum de
+        # terminar. O punho pega a janela; se a rolagem não for encerrada
+        # junto, ela fica ligada para sempre e a página rola sozinha.
+        rec = self.armado()
+        feed(rec, AFTER_ARM, slide_v(POSE_SCROLL, 0.35, 0.65, steps=4))
+        self.assertTrue(rec.scrolling)
+        evs = feed(rec, AFTER_ARM + 0.5, still(POSE_FIST, 0.3))
+        nomes = names(evs)
+        self.assertIn("scroll_end", nomes)
+        self.assertFalse(rec.scrolling)
+        # E o fim da rolagem vem ANTES do grab: a interface não pode ficar
+        # marcando "rolando" e "arrastando" ao mesmo tempo.
+        self.assertLess(nomes.index("scroll_end"), nomes.index("grab"))
+
+    def test_durante_o_arrasto_a_rolagem_nao_assume(self):
+        rec = self.armado()
+        feed(rec, AFTER_ARM, still(POSE_FIST, 0.2))
+        self.assertTrue(rec.dragging)
+        evs = feed(rec, AFTER_ARM + 0.3, still(POSE_SCROLL, 0.2))
+        self.assertNotIn("scroll_start", names(evs))
+        self.assertTrue(rec.dragging)
 
 
 # --- previsão: adiantar sem passar do ponto --------------------------------

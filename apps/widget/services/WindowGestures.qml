@@ -51,6 +51,11 @@ Item {
     // Ganho do ponteiro livre (dois dedos). Maior que o do arrasto: mover o
     // cursor de ponta a ponta da tela não pode exigir varrer o braço.
     property real pointerGain: 2400
+    // Ganho da rolagem, em unidades de roda de alta resolução por fração do
+    // quadro. 120 = um degrau de roda; 4200 faz a mão atravessando meio
+    // quadro valer uns dezessete degraus — um pouco acima de um trackpad,
+    // porque a mão no ar cansa mais rápido que o dedo apoiado.
+    property real scrollGain: 4200
 
     Connections {
         target: root.store
@@ -71,6 +76,23 @@ Item {
             root._empurrar(mx, my);
         }
 
+        function onHandScroll(eixo, d) {
+            if (!root.enabled || !root.store.scrolling || !pointer.running)
+                return;
+            // A página segue a mão nos dois eixos: descendo rola para baixo,
+            // indo para a direita rola para a direita.
+            //
+            // Só o vertical inverte o sinal, e não é escolha de gosto: o y da
+            // imagem cresce para BAIXO enquanto a roda positiva é para CIMA.
+            // O x não tem essa troca (já vem espelhado do reconhecedor, ver
+            // gestures.py), e inverter os dois faria a rolagem lateral andar
+            // ao contrário da mão.
+            const passos = Math.round((eixo === "h" ? d : -d) * root.scrollGain);
+            if (passos === 0)
+                return;
+            pointer.write((eixo === "h" ? "SCROLL_H " : "SCROLL ") + passos + "\n");
+        }
+
         function onGestureDetected(name, pose) {
             if (!root.enabled)
                 return;
@@ -81,6 +103,47 @@ Item {
             }
             if (name === "disarm") {
                 root.store.gestureArmed = false;
+                return;
+            }
+
+            // FIM de gesto nunca passa por guarda, e isso não é zelo: as
+            // guardas abaixo existem para impedir que um estranho COMECE a
+            // comandar. Aplicá-las ao fim prendia o estado — o dono do rosto
+            // é reavaliado a cada quadro, e um único quadro em que a
+            // identidade falha engolia o "scroll_end". A interface ficava
+            // rolando para sempre, e nada mais a desligava.
+            if (name === "scroll_end") {
+                root.store.scrolling = false;
+                root.store.lastGesture = "";
+                return;
+            }
+
+            if (name === "point_end") {
+                root._pararMovimento();
+                // Sair da pose com o polegar fechado tem de soltar o botão:
+                // um clique preso captura tudo o que vier depois.
+                if (root.store.clicking) {
+                    pointer.write("RELEASE\n");
+                    root.store.clicking = false;
+                }
+                root.store.pointing = false;
+                root.store.lastGesture = "";
+                return;
+            }
+
+            if (name === "click_up") {
+                pointer.write("RELEASE\n");
+                root.store.clicking = false;
+                root.store.lastGesture = "movendo o cursor";
+                return;
+            }
+
+            if (name === "release") {
+                root._pararMovimento();
+                pointer.write("RELEASE\n");
+                root.store.dragging = false;
+                root.store.lastGesture = "soltou";
+                gestureFade.restart();
                 return;
             }
 
@@ -109,8 +172,26 @@ Item {
                 // "clicando" pendurado mentiria sobre o que a mão faz.
                 root.store.clicking = false;
                 root.store.pointing = false;
+                root.store.scrolling = false;
                 root.store.dragging = true;
                 root.store.lastGesture = "arrastando a janela";
+                gestureFade.stop();
+                return;
+            }
+            // Rolagem: quatro dedos com o polegar recolhido.
+            if (name === "scroll_start") {
+                if (!pointer.running)
+                    return;
+                root.store.scrolling = true;
+                root.store.lastGesture = "rolando";
+                gestureFade.stop();
+                return;
+            }
+            // O eixo travou: diz qual, para a pessoa saber por que a página
+            // só anda num sentido (o outro fica parado até soltar a pose).
+            if (name === "scroll_axis") {
+                root.store.lastGesture = pose === "h"
+                    ? "rolando de lado" : "rolando a página";
                 gestureFade.stop();
                 return;
             }
@@ -124,19 +205,6 @@ Item {
                 gestureFade.stop();
                 return;
             }
-            if (name === "point_end") {
-                root._pararMovimento();
-                // Sair da pose com o polegar fechado tem de soltar o botão:
-                // um clique preso captura tudo o que vier depois.
-                if (root.store.clicking) {
-                    pointer.write("RELEASE\n");
-                    root.store.clicking = false;
-                }
-                root.store.pointing = false;
-                root.store.lastGesture = "";
-                return;
-            }
-
             // Polegar: fechou, pressiona o botão; abriu, solta. Mantido
             // fechado, continua pressionado — é arrastar/selecionar.
             if (name === "click_down") {
@@ -148,22 +216,6 @@ Item {
                 gestureFade.stop();
                 return;
             }
-            if (name === "click_up") {
-                pointer.write("RELEASE\n");
-                root.store.clicking = false;
-                root.store.lastGesture = "movendo o cursor";
-                return;
-            }
-
-            if (name === "release") {
-                root._pararMovimento();
-                pointer.write("RELEASE\n");
-                root.store.dragging = false;
-                root.store.lastGesture = "soltou";
-                gestureFade.restart();
-                return;
-            }
-
             const entry = root.actions[name + ":" + pose];
             if (entry === undefined)
                 return;
@@ -186,6 +238,7 @@ Item {
             root.store.clicking = false;
         }
         root.store.pointing = false;
+        root.store.scrolling = false;
     }
 
     // ------------------------------------------------------------------
@@ -304,6 +357,7 @@ Item {
             root.store.dragging = false;
             root.store.pointing = false;
             root.store.clicking = false;
+            root.store.scrolling = false;
         }
     }
 

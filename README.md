@@ -145,11 +145,18 @@ metadados, com nome idêntico, que nunca produz quadro. Depende do
 | ✋ desliza → / ← | próxima coluna / coluna anterior |
 | ✋ desliza ↑ | maximiza a coluna |
 | ✋ desliza ↓ | tela cheia |
+| ✌ **4 dedos ↑ / ↓** (polegar recolhido) | rola a página |
 | ☝ **polegar + indicador + médio** | move o cursor do mouse |
 | ☝ **fecha o polegar** | clica — mantido fechado, segura o clique |
 | ✊ **fecha a mão** | pega a janela sob o cursor |
 | ✊ **move** | a janela acompanha a mão |
 | ✋ **abre a mão** | solta a janela onde estiver |
+
+A rolagem usa os quatro dedos com o **polegar recolhido** contra a palma —
+é só isso que a separa da mão aberta, que tem o polegar para fora. A distinção
+importa: sem ela, armar a mão já começaria a rolar a página. Sobe e desce a
+mão para rolar; o eixo horizontal é ignorado de propósito, senão a página
+fugiria na diagonal a cada tremida.
 
 A mão de ponteiro (polegar, indicador e médio levantados; anelar e mindinho
 dobrados) vira um mouse no ar: o cursor acompanha a mão, e o **polegar é o
