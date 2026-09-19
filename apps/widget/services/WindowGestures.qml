@@ -32,7 +32,7 @@ Item {
                                     && root.store.gesturesEnabled
                                     && root.store.cameraEnabled
 
-    // Mapeamento gesto → ação do niri. `null` = pedir confirmação (fechar).
+    // Mapeamento gesto → ação do niri.
     // Chave: "<gesto>:<pose>" — a mesma direção faz coisas diferentes com a
     // mão aberta (navegar) e fechada (arrastar a janela), que é o que dá um
     // vocabulário de verdade com poucos gestos.
