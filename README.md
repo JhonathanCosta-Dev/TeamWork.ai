@@ -1,16 +1,23 @@
 # Team Work AI
 
 Uma pequena equipe de agentes de IA trabalhando no seu desktop Linux.
-Daemon em **Rust** orquestra agentes em paralelo (Gemini, Groq, OpenRouter ou
-modo simulado); um widget **Quickshell/QML** mostra os avatares trabalhando,
-com terminal para delegar tarefas: `@forge implemente esta função`. Cada
-agente tem uma **memória permanente** entre execuções (ativa por padrão,
-sem configuração) — consulta o que já aprendeu antes de responder e pode
-salvar descobertas, só suas ou compartilhadas com a equipe.
+Daemon em **Rust** orquestra agentes em paralelo (Gemini, Groq, OpenRouter,
+Anthropic ou modo simulado); um widget **Quickshell/QML** mostra os avatares trabalhando,
+com um **chat** para conversar com a equipe e delegar tarefas:
+`@forge implemente esta função`. A conversa tem memória — os últimos turnos vão
+no prompt, então dá pra dizer "e agora refatora isso" sem repetir o que é
+"isso" — e continua onde parou quando você fecha e reabre o app. Cada agente
+tem ainda uma **memória permanente** entre execuções (ativa por padrão, sem
+configuração) — consulta o que já aprendeu antes de responder e pode salvar
+descobertas, só suas ou compartilhadas com a equipe.
+
+<p align="center">
+  <img src="docs/screenshots/widget.png" alt="Team Work AI — widget Quickshell mostrando a equipe (Atlas, Forge) e o terminal de agentes" width="440">
+</p>
 
 **Estado atual:** MVP funcional — Fases 1–3 completas (daemon, provedores
 reais, orquestração), Fase 4 implementada em QML (validar no seu Quickshell),
-Fase 5 entregue (systemd, PKGBUILD, docs). 92 testes passando sem rede.
+Fase 5 entregue (systemd, PKGBUILD, docs). 105 testes passando sem rede.
 
 ## Arquitetura
 
@@ -31,6 +38,7 @@ flowchart LR
     GEM[Gemini]
     GROQ[Groq]
     OR[OpenRouter]
+    ANTH[Anthropic]
 
     UI --> BC
     Term --> BC
@@ -42,10 +50,12 @@ flowchart LR
     PROV -->|HTTPS| GEM
     PROV -->|HTTPS| GROQ
     PROV -->|HTTPS| OR
+    PROV -->|HTTPS| ANTH
 ```
 
 Agentes padrão: **Atlas** (coordenador), **Forge** (desenvolvedor),
-**Íris** (pesquisadora), **Sentinel** (revisor). Provedor e modelo são
+**Íris** (pesquisadora), **Sentinel** (revisor), **Jorginho** (tech lead —
+revisor sênior, usa o provedor Anthropic). Provedor e modelo são
 configuráveis por agente, a qualquer momento.
 
 ## Tecnologias
@@ -79,7 +89,7 @@ quickshell -p apps/widget/shell.qml      # terminal 2 — widget
 ./scripts/demo.sh                        # terminal 3 — demonstração
 ```
 
-No terminal do widget (ou via `twctl terminal "…"`):
+No chat do widget (ou via `twctl terminal "…"`):
 
 ```text
 /help
@@ -90,18 +100,149 @@ No terminal do widget (ou via `twctl terminal "…"`):
 /provider forge groq
 /model forge <modelo-listado>
 /cancel <task-id>
+/clear                  # limpa a tela E o histórico da conversa
 ```
+
+## Modos do widget
+
+Compacto (pastilha na borda), expandido (chat + abas de agentes/tarefas/config),
+tela cheia (sala de operações) e **copiloto**.
+
+O chat é a tela principal nos dois primeiros: suas mensagens e as respostas da
+equipe em bolhas, com o texto aparecendo enquanto é escrito. A coordenação
+interna entre os agentes fica na aba **Bastidores** — perto, mas fora do fio da
+conversa.
+
+No copiloto fica só o rosto do Jorginho sobreposto à área de trabalho, no
+monitor e borda escolhidos em Config. Ele não reserva espaço na tela e nunca
+pede o foco do teclado — você segue digitando na janela de baixo enquanto ele
+fica ali te olhando (e te seguindo com o olhar, se a câmera estiver ligada).
+Só abre a boca quando você o chama: "fala Jorginho", aceno, palmas ou o botão
+do microfone. O aceno pode ser desligado em Config → Câmera ("Acenar chama o
+Jorginho"), útil quando a câmera fica ligada o dia todo. A resposta sai em voz e em legenda sob o rosto, **sem** inflar
+pra tela cheia como nos outros modos.
+
+Liga pelo botão 👁 (compacto ou expandido), pelo interruptor em Config, ou por
+IPC: `qs ipc call teamwork copilot`. Passe o mouse em cima pra ver os controles
+(microfone, ativação por voz, voltar ao widget, fechar).
+
+## Controle de janelas por gesto
+
+Mexe nas janelas do compositor com a mão, pela **mesma webcam** que o avatar já
+usa para olhar pra você — sem hardware novo e sem enviar nada pra fora: o
+reconhecimento roda local, e do Python só saem os nomes dos gestos.
+
+Ligue em **Config → Controle por gesto** (precisa da câmera ligada).
+
+Com mais de uma webcam, **Config → Câmera usada** lista as que existem e deixa
+escolher; a lista sai de `services/cameras.py`, que pergunta ao driver quais
+`/dev/videoN` capturam imagem de verdade — cada webcam expõe também um nó de
+metadados, com nome idêntico, que nunca produz quadro. Depende do
+[niri](https://github.com/YaLTeR/niri), que recebe as ações por `niri msg`.
+
+| gesto | ação |
+| --- | --- |
+| ✋ desliza → / ← | próxima coluna / coluna anterior |
+| ✋ desliza ↑ | maximiza a coluna |
+| ✋ desliza ↓ | tela cheia |
+| ✌ **4 dedos ↑ / ↓** (polegar recolhido) | rola a página |
+| ☝ **polegar + indicador + médio** | move o cursor do mouse |
+| ☝ **fecha o polegar** | clica — mantido fechado, segura o clique |
+| ✊ **fecha a mão** | pega a janela sob o cursor |
+| ✊ **move** | a janela acompanha a mão |
+| ✋ **abre a mão** | solta a janela onde estiver |
+
+A rolagem usa os quatro dedos com o **polegar recolhido** contra a palma —
+é só isso que a separa da mão aberta, que tem o polegar para fora. A distinção
+importa: sem ela, armar a mão já começaria a rolar a página. Sobe e desce a
+mão para rolar; o eixo horizontal é ignorado de propósito, senão a página
+fugiria na diagonal a cada tremida.
+
+A mão de ponteiro (polegar, indicador e médio levantados; anelar e mindinho
+dobrados) vira um mouse no ar: o cursor acompanha a mão, e o **polegar é o
+botão** — fechou, clicou; mantido fechado, segura o clique, então dá para
+arrastar e selecionar como num trackpad. É também como se mira numa janela
+antes de fechar a mão inteira para pegá-la.
+
+O arrasto é literalmente o **Super + arrastar do mouse**: como o niri não expõe
+o arrasto interativo por IPC, um ponteiro virtual (`/dev/uinput`) pressiona
+Super + botão esquerdo e move o cursor — o compositor faz o resto, exatamente
+como se você estivesse arrastando com a mão no mouse. Fechar a mão é o botão
+descendo; abrir é soltar.
+
+Fechar janela **não** é um gesto: some da câmera qualquer caminho para uma ação
+irreversível. O teclado dá conta disso, e um falso positivo custaria trabalho
+não salvo.
+
+Com as duas mãos no quadro, **comanda a que está mais perto da câmera** — é a
+que você levantou de propósito, enquanto a outra costuma estar no teclado. A
+régua é o tamanho da **palma**, que é rígida: medir a mão inteira faria um
+punho perto perder para uma mão aberta ao fundo.
+
+**Levante a mão aberta e segure meio segundo pra entrar no comando**: aparece um selo na
+tela dizendo que a mão está no comando, e a partir daí os gestos valem. Três
+segundos sem gesto desarma sozinho. Sem essa trava, gesticular numa conversa
+jogaria suas janelas pra outro monitor.
+
+Outras travas: um rosto reconhecido como *não sendo você* não comanda nada, e
+fechar janela nunca executa direto — vira uma confirmação na tela, que expira
+sozinha em 12 s mantendo a janela aberta.
+
+Requer o modelo de mãos (`hand_landmarker.task`) e, para o arrasto, o pacote
+`evdev` com permissão de escrita em `/dev/uinput` — tudo instalado/verificado
+por `scripts/setup-facetrack.sh`. Numa sessão de desktop comum a permissão do
+uinput vem por ACL do seat, sem root nem grupo extra (`getfacl /dev/uinput`).
+Sem ela, os outros gestos funcionam e só o arrasto fica de fora.
+
+**Fluidez.** O cursor é tão fluido quanto a taxa com que a mão é amostrada, e
+três coisas trabalham juntas nisso: enquanto a mão comanda, o laço do tracker
+acelera para 24 Hz (e o rosto cede a vez, já que ninguém olha o avatar no meio
+de um arrasto); a posição passa por um filtro 1€, que corta o tremor sem
+atrasar o movimento; e cada deslocamento é repartido em passos curtos
+entregues a ~120 Hz, para o cursor não andar aos saltos no ritmo da câmera.
+
+**Onde os avisos aparecem.** O selo "no comando" e o espelho da mão flutuam
+sobre a área de trabalho; em **Config → Onde mostrar os avisos de gesto** dá
+para escolher o canto (a grade é uma miniatura da tela) e, com mais de um
+monitor, em qual tela. Por padrão vão no rodapé central do mesmo monitor do
+widget — mas quem usa gesto costuma estar longe do teclado, e nem sempre é ali
+que os olhos estão.
+
+**Ver a mão sendo captada**: em Config, logo abaixo do interruptor do controle
+por gesto, ligue *"Mostrar a câmera e os traços da mão ao gesticular"*. Aparece
+um quadro sobre a área de trabalho com a imagem da webcam e o esqueleto
+detectado desenhado por cima, mais o que falta para comandar ("mão aberta —
+segure parada" → "no comando — deslize"). A imagem vai para a memória da sessão
+(`$XDG_RUNTIME_DIR`), nunca para o disco, e só enquanto há mão no quadro.
+
+**Se um gesto não pegar, rode o diagnóstico antes de mexer em limiar:**
+
+```bash
+./scripts/gesture-doctor.sh      # Ctrl+C encerra; nada é executado
+```
+
+Ele mostra ao vivo a taxa real de quadros, se a câmera está vendo sua mão e em
+que pose, e qual comando cada gesto teria disparado. A taxa importa mais do que
+parece: os limiares assumem ~6 quadros/s (medido numa Intel UHD com
+FaceLandmarker + HandLandmarker + reconhecimento de identidade no mesmo laço).
+Abaixo disso, um deslize não junta amostras suficientes — o diagnóstico avisa.
+
+Para o detalhe quadro a quadro, `TEAMWORK_FACE_DEBUG=1` grava em
+`~/.local/share/teamwork-ai/facetrack/wave-debug.log` (desligado por padrão:
+o arquivo cresce sem limite).
 
 ## Configuração das APIs (opcional)
 
 ```bash
 cp .env.example ~/.config/teamwork-ai/env && chmod 600 ~/.config/teamwork-ai/env
-# edite GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY
+# edite GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY / ANTHROPIC_API_KEY
 systemctl --user restart teamwork-ai-daemon
 ```
 
 Regras de custo: `allow_paid_models = false` por padrão; no OpenRouter apenas
 modelos gratuitos (pricing 0 ou `:free`) são aceitos — sem fallback pago.
+**Anthropic não tem tier gratuito**: exige `allow_paid_models = true` pra ser
+usado de verdade (mesma flag do OpenRouter — ligar uma libera as duas).
 Limites e timeouts em `config/teamwork-ai.example.toml`.
 
 ## Modo mock
@@ -120,9 +261,10 @@ install-user · uninstall-user · logs · status` — ver `Justfile`.
 ```
 apps/daemon      binários: teamwork-ai-daemon, twctl
 apps/widget      QML (components/ pages/ services/ stores/ theme/)
+                 services/*.py  voz, webcam e gestos (venv próprio, 100% local)
 crates/protocol  NDJSON v1: requests, responses, eventos
 crates/domain    Agent, Task, Run, mensagens, parser de comandos
-crates/providers AiProvider: mock, gemini, groq, openrouter; retry, rate limit
+crates/providers AiProvider: mock, gemini, groq, openrouter, anthropic; retry, rate limit
 crates/storage   SQLite + migrations (12 tabelas)
 crates/orchestrator  grafo, paralelismo, cancelamento, consolidação
 config/ packaging/ scripts/ docs/ assets/avatars/
@@ -131,8 +273,21 @@ config/ packaging/ scripts/ docs/ assets/avatars/
 ## Testes
 
 ```bash
-cargo test --workspace   # 92 testes, sem internet
+cargo test --workspace                          # sem internet
+python3 apps/widget/services/test_gestures.py   # reconhecedor de gestos
+python3 apps/widget/services/test_wake.py       # gatilho da ativação por voz
+python3 apps/widget/services/test_cameras.py   # listagem de câmeras
+python3 apps/widget/services/test_pointer.py   # ponteiro virtual do arrasto
+
+# precisa do venv do rastreamento (opencv):
+~/.local/share/teamwork-ai/facetrack/venv/bin/python \
+    apps/widget/services/test_preview.py        # espelho da mão
 ```
+
+O reconhecedor de gestos é testado sem câmera: `gestures.py` só recebe posições
+e poses, então as trajetórias dos testes são sintéticas — é o que permite
+verificar que um aceno não vira um comando, que um movimento lento não vira
+deslize e que a mão precisa estar armada, sem depender de acenar pra webcam.
 
 Cobrem: parser de comandos, protocolo, grafo de dependências, execução
 paralela real, cancelamento, timeout, retry/backoff, rate limiter, mock,
@@ -161,9 +316,12 @@ anti-loop entre agentes, cancelamento global. Detalhes: `docs/security.md`.
    correções pelos agentes originais e nova revisão, até `max_reviews`.
 3. ~~Editor de agentes no widget~~ ✅ — criar, editar (nome/função/prompt),
    escolher avatar e ativar/desativar pela aba Agentes.
-4. Secret Service/libsecret para chaves.
-5. Transcrição de áudio (Groq) e entradas multimodais (Gemini).
-6. Frontend para Windows 11 (fora do Quickshell) conversando com o mesmo
+4. ~~Provedor Anthropic + agente Jorginho~~ ✅ — tech lead/revisor sênior
+   (`Capability::Review`, mesmo mecanismo do Sentinel); requer
+   `ANTHROPIC_API_KEY` + `allow_paid_models = true` (sem tier gratuito).
+5. Secret Service/libsecret para chaves.
+6. Transcrição de áudio (Groq) e entradas multimodais (Gemini).
+7. Frontend para Windows 11 (fora do Quickshell) conversando com o mesmo
    daemon Rust — exige trocar o socket Unix por named pipe/TCP local.
 
 ## Documentação

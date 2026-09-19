@@ -21,15 +21,22 @@ Column {
 
     Rectangle {
         width: root.width
-        height: root.multiline ? 72 : 30
+        height: root.multiline ? 76 : 32
         radius: Theme.radiusSmall
-        color: Theme.surfaceAlt
-        border.width: input.activeFocus ? 1 : 0
-        border.color: Theme.accent
+        color: input.activeFocus ? Theme.surfaceAlt : Theme.surface
+        border.width: 1
+        border.color: input.activeFocus ? Qt.alpha(Theme.accent, 0.55) : Theme.border
+
+        Behavior on color {
+            ColorAnimation { duration: Theme.animFast }
+        }
+        Behavior on border.color {
+            ColorAnimation { duration: Theme.animFast }
+        }
 
         Flickable {
             anchors.fill: parent
-            anchors.margins: 6
+            anchors.margins: 8
             clip: true
             contentHeight: input.implicitHeight
             interactive: root.multiline

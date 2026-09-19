@@ -4,7 +4,7 @@
 //!   teamwork-ai-daemon [--demo]
 //!
 //! Variáveis de ambiente relevantes: RUST_LOG, GEMINI_API_KEY, GROQ_API_KEY,
-//! OPENROUTER_API_KEY, TEAMWORK_AI_SOCKET, TEAMWORK_AI_DB.
+//! OPENROUTER_API_KEY, ANTHROPIC_API_KEY, TEAMWORK_AI_SOCKET, TEAMWORK_AI_DB.
 
 use teamwork_daemon::{start, DaemonConfig};
 use tracing_subscriber::EnvFilter;

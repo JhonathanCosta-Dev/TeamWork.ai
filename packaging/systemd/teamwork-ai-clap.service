@@ -1,0 +1,33 @@
+# Chamada por PALMAS com o app fechado: duas palmas abrem o Team Work AI já
+# cumprimentando (bom dia / boa tarde / boa noite conforme a hora).
+#
+# Instalar em: ~/.config/systemd/user/teamwork-ai-clap.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now teamwork-ai-clap
+#
+# ATENÇÃO — isto mantém o MICROFONE ABERTO enquanto você estiver logado, porque
+# não há outra forma de ouvir a palma com o app fechado. Nada é gravado nem sai
+# da máquina: o processo só mede a ENERGIA do som (é o mesmo detector de
+# impulso, sem reconhecimento de fala, sem modelo, sem rede). Para desligar:
+#   systemctl --user disable --now teamwork-ai-clap
+
+[Unit]
+Description=Team Work AI — abre o app com duas palmas
+Documentation=file:///usr/share/doc/teamwork-ai/README.md
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/teamwork-ai-clap-listen
+# `always` de propósito: se o detector morrer (ou for morto), a escuta tem de
+# voltar sozinha — um serviço de escuta que fica "ativo e surdo" é pior que um
+# que caiu, porque ninguém percebe.
+Restart=always
+RestartSec=5
+# Sem privilégio novo e sem acesso a mais nada além do necessário (áudio via
+# PipeWire no runtime dir do usuário).
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

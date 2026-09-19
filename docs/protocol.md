@@ -55,7 +55,7 @@ encontrado, `1002` conflito, `1003` erro de provedor, `1004` rate limit,
 | `task.completed` / `task.failed` / `task.cancelled` | `title` / `error` / `reason` |
 | `task.paused` / `task.resumed` | — |
 | `run.started` | `request`, `mode` |
-| `run.completed` | `summary`, `partial`, `subtasks_total`, `subtasks_completed` |
+| `run.completed` | `summary`, `partial`, `agent_name` (vazio = equipe), `subtasks_total`, `subtasks_completed` |
 | `run.failed` | `error` |
 | `artifact.created` | `artifact_id`, `name` |
 | `file.written` | `path`, `bytes`, `workspace`, `agent_name` |
@@ -86,8 +86,26 @@ reviewing, completed, paused, cancelled, error, rate_limited, offline`.
 | `provider.models` | `provider_id`, `free_only?` | modelos (filtro gratuito por padrão) |
 | `terminal.input` | `input` | `text`, `action?` (`clear`/`settings`), `run_id?` |
 | `events.recent` | `limit?` (máx. 500) | eventos persistidos |
+| `conversation.recent` | `limit?` (máx. 500) | `turns: [...]` — histórico do chat |
+| `conversation.clear` | — | `ok` (também feito por `/clear`) |
 | `settings.get` / `settings.set` | `key` / `key, value` | valor / `ok` |
 | `demo.run` | — | `run_id` (cenário de demonstração, só mock) |
+
+## Histórico da conversa
+
+O chat tem memória: cada mensagem do usuário e cada resposta final viram um
+turno em `conversation`, e os últimos 12 turnos são enviados ao modelo como
+mensagens `user`/`assistant` de verdade (não como um resumo em texto). É o que
+faz "e a população de lá?" ter um "lá" — sem isso cada mensagem chegava ao
+modelo sozinha.
+
+Um turno tem `id`, `run_id`, `role` (`user`/`assistant`), `agent_name` (vazio
+quando a resposta é da equipe inteira), `content` e `created_at`. O widget
+carrega o histórico ao conectar (`conversation.recent`), então a conversa
+sobrevive a fechar e reabrir o app.
+
+O que NÃO entra: a conversa interna entre agentes (fica em `messages`, e
+aparece na aba "Bastidores") e os acks de tarefa.
 
 ## Exemplo de sessão
 

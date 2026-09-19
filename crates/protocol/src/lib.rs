@@ -180,9 +180,21 @@ pub mod events {
     /// Agente gravou um arquivo no workspace (payload: path, bytes).
     pub const FILE_WRITTEN: &str = "file.written";
     /// Agente gravou uma nota de memória (payload: scope, dir, slug, path, bytes).
+    /// Texto colado grande foi salvo como anexo em arquivo.
+    pub const INPUT_ATTACHED: &str = "input.attached";
     pub const MEMORY_SAVED: &str = "memory.saved";
     /// Memória (índice/notas) foi injetada no prompt da tarefa (payload: dir).
     pub const MEMORY_RECALLED: &str = "memory.recalled";
+    /// Um agente fez uma busca na internet (payload: kind, query, agent_name).
+    pub const WEB_SEARCHED: &str = "web.searched";
+    /// Um agente pediu pra abrir um aplicativo — AGUARDA confirmação do usuário
+    /// (payload: request_id, app, args, agent_name). Nada é executado até o
+    /// widget chamar `app.open` após o usuário aprovar.
+    pub const APP_OPEN_REQUEST: &str = "app.open_request";
+    /// Aplicativo aberto após confirmação (payload: app).
+    pub const APP_OPENED: &str = "app.opened";
+    /// Falha ao abrir o aplicativo (payload: app, error).
+    pub const APP_OPEN_FAILED: &str = "app.open_failed";
     pub const USAGE_UPDATED: &str = "usage.updated";
     pub const TERMINAL_OUTPUT: &str = "terminal.output";
     pub const ERROR: &str = "error";
@@ -210,7 +222,19 @@ pub mod methods {
     /// a chave nunca é devolvida ao cliente nem registrada em logs).
     pub const PROVIDER_SET_KEY: &str = "provider.set_key";
     pub const TERMINAL_INPUT: &str = "terminal.input";
+    /// Transcreve um arquivo de áudio local (WAV) em texto, via provedor
+    /// com suporte a `audio_transcription` (Groq/Whisper).
+    pub const VOICE_TRANSCRIBE: &str = "voice.transcribe";
+    /// Abre um aplicativo local. Chamado pelo widget SOMENTE após o usuário
+    /// confirmar um `app.open_request` (params: app, args). O daemon executa
+    /// o processo desanexado e registra o evento.
+    pub const APP_OPEN: &str = "app.open";
     pub const EVENTS_RECENT: &str = "events.recent";
+    /// Histórico do chat (turnos do usuário e respostas finais), para a
+    /// interface remontar a conversa ao abrir.
+    pub const CONVERSATION_RECENT: &str = "conversation.recent";
+    /// Apaga o histórico do chat.
+    pub const CONVERSATION_CLEAR: &str = "conversation.clear";
     pub const SETTINGS_GET: &str = "settings.get";
     pub const SETTINGS_SET: &str = "settings.set";
     pub const DEMO_RUN: &str = "demo.run";
@@ -235,6 +259,15 @@ pub struct TaskIdParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalInputParams {
     pub input: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceTranscribeParams {
+    /// Caminho local do WAV gravado pelo widget (mesma máquina/usuário).
+    pub path: String,
+    /// Código ISO-639-1 ("pt") — opcional; melhora a precisão do Whisper.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,6 +302,12 @@ pub struct SettingsGetParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventsRecentParams {
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationRecentParams {
     #[serde(default)]
     pub limit: Option<u32>,
 }

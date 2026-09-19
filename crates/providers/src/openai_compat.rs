@@ -18,6 +18,16 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+/// Viés léxico do Whisper para o português falado neste app: nome do agente e
+/// jargão que ele mais escutava errado ("Jorginho" saía "jogo linho", "Liquid"
+/// virava "líquido"). O Whisper trata o prompt como continuação de contexto,
+/// então é uma lista de termos, não uma instrução.
+const TRANSCRIBE_HINT_PT: &str = "Conversa com o assistente Jorginho sobre \
+desenvolvimento web e lojas Shopify. Termos comuns: Jorginho, Team Work AI, \
+Shopify, Liquid, tema, seção, snippet, template, schema, metafield, checkout, \
+carrinho, coleção, produto, deploy, commit, branch, Quickshell, QML, Rust, \
+CSS, HTML, JavaScript, terminal, vault, skill.";
+
 pub struct OpenAiCompatProvider {
     id: String,
     name: String,
@@ -58,6 +68,20 @@ impl OpenAiCompatProvider {
             ],
             allow_paid_models,
         )
+    }
+
+    /// Servidor local compatível com OpenAI (Ollama, LM Studio, vLLM…) rodando
+    /// na máquina do usuário ou na rede dele. Modelos são descobertos via
+    /// `GET /models` e tratados como gratuitos (rodam no hardware do usuário —
+    /// sem custo, nunca bloqueados por `allow_paid_models`). A chave é só um
+    /// placeholder: servidores locais costumam ignorá-la.
+    pub fn local(base_url: &str, api_key: String) -> Self {
+        let key = if api_key.trim().is_empty() {
+            "local".to_string()
+        } else {
+            api_key
+        };
+        Self::new("local", "Local (self-hosted)", base_url, key, vec![], true)
     }
 
     pub fn new(
@@ -335,6 +359,62 @@ impl AiProvider for OpenAiCompatProvider {
         Ok(models)
     }
 
+    async fn transcribe(
+        &self,
+        audio: Vec<u8>,
+        language: Option<&str>,
+    ) -> Result<String, ProviderError> {
+        if !self.capabilities().audio_transcription {
+            return Err(ProviderError::Unsupported {
+                provider: self.id.clone(),
+            });
+        }
+        let part = reqwest::multipart::Part::bytes(audio)
+            .file_name("audio.wav")
+            .mime_str("audio/wav")
+            .map_err(|e| ProviderError::InvalidResponse {
+                provider: self.id.clone(),
+                message: e.to_string(),
+            })?;
+        // `large-v3` (não o `turbo`): o turbo é mais rápido mas erra mais em
+        // nome próprio e termo técnico — num clipe de comando de voz (segundos)
+        // a diferença de latência é irrelevante e a de precisão, não.
+        let mut form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", "whisper-large-v3")
+            .text("response_format", "json")
+            .text("temperature", "0");
+        if let Some(lang) = language {
+            form = form.text("language", lang.to_string());
+            // Dicionário de contexto: o Whisper usa o prompt como viés léxico,
+            // o que conserta justamente o que ele mais errava — o apelido do
+            // agente e o jargão do projeto.
+            if lang.starts_with("pt") {
+                form = form.text("prompt", TRANSCRIBE_HINT_PT.to_string());
+            }
+        }
+        let resp = self
+            .request(reqwest::Method::POST, "/audio/transcriptions")
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| self.net_err(e))?;
+        let resp = self.check_response(resp).await?;
+
+        #[derive(Deserialize)]
+        struct WireTranscription {
+            text: String,
+        }
+        let wire: WireTranscription =
+            resp.json()
+                .await
+                .map_err(|e| ProviderError::InvalidResponse {
+                    provider: self.id.clone(),
+                    message: e.to_string(),
+                })?;
+        Ok(wire.text.trim().to_string())
+    }
+
     async fn complete(
         &self,
         request: CompletionRequest,
@@ -432,6 +512,7 @@ impl AiProvider for OpenAiCompatProvider {
                                 if data == "[DONE]" {
                                     return Ok(Some((
                                         StreamChunk {
+                                            progress: false,
                                             delta: String::new(),
                                             done: true,
                                         },
@@ -452,7 +533,11 @@ impl AiProvider for OpenAiCompatProvider {
                                         .is_some();
                                     if !delta.is_empty() || done {
                                         return Ok(Some((
-                                            StreamChunk { delta, done },
+                                            StreamChunk {
+                                                progress: false,
+                                                delta,
+                                                done,
+                                            },
                                             (bs, buf, done),
                                         )));
                                     }
@@ -473,6 +558,7 @@ impl AiProvider for OpenAiCompatProvider {
                             None => {
                                 return Ok(Some((
                                     StreamChunk {
+                                        progress: false,
                                         delta: String::new(),
                                         done: true,
                                     },
@@ -520,6 +606,32 @@ mod tests {
         // é NÃO ser PaidModelBlocked.
         let req = CompletionRequest {
             model: "vendor/model:free".into(),
+            messages: vec![ChatMessage::user("oi")],
+            max_tokens: None,
+            temperature: None,
+        };
+        let err = p.complete(req).await.unwrap_err();
+        assert!(!matches!(err, ProviderError::PaidModelBlocked { .. }));
+    }
+
+    #[test]
+    fn local_preset_is_free_and_has_placeholder_key() {
+        // URL normalizada (sem barra final), id "local", chave placeholder
+        // quando não informada, e nunca sujeito ao bloqueio de pagos.
+        let p = OpenAiCompatProvider::local("http://192.168.0.42:11434/v1/", String::new());
+        assert_eq!(p.id, "local");
+        assert_eq!(p.base_url, "http://192.168.0.42:11434/v1");
+        assert_eq!(p.api_key, "local");
+        assert!(p.allow_paid_models);
+    }
+
+    #[tokio::test]
+    async fn local_never_blocks_models() {
+        // Servidor local: qualquer modelo passa a política (falha só na rede,
+        // pois não há servidor no teste) — nunca PaidModelBlocked.
+        let p = OpenAiCompatProvider::local("http://127.0.0.1:11434/v1", String::new());
+        let req = CompletionRequest {
+            model: "qwen2.5-coder:14b".into(),
             messages: vec![ChatMessage::user("oi")],
             max_tokens: None,
             temperature: None,

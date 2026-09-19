@@ -45,4 +45,5 @@ echo "==> Provedores ativos:"
 ./target/debug/twctl daemon.status 2>/dev/null | grep -A8 '"providers"' | grep '"' | tr -d '", ' | grep -v providers || true
 
 echo "==> Daemon ok. Abrindo widget (Ctrl+C encerra os dois)…"
-quickshell -p apps/widget/shell.qml
+# QML_XHR_ALLOW_FILE_READ: o avatar lê assets/face-data.json via XHR.
+QML_XHR_ALLOW_FILE_READ=1 quickshell -p apps/widget/shell.qml

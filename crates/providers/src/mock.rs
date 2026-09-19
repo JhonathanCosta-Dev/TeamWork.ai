@@ -312,6 +312,7 @@ impl AiProvider for MockProvider {
                             tokio::time::sleep(pace).await;
                             Some((
                                 Ok(StreamChunk {
+                                    progress: false,
                                     delta: w,
                                     done: false,
                                 }),
@@ -320,6 +321,7 @@ impl AiProvider for MockProvider {
                         }
                         None if !done_sent => Some((
                             Ok(StreamChunk {
+                                progress: false,
                                 delta: String::new(),
                                 done: true,
                             }),
@@ -336,11 +338,13 @@ impl AiProvider for MockProvider {
                 .into_iter()
                 .map(|w| {
                     Ok(StreamChunk {
+                        progress: false,
                         delta: w,
                         done: false,
                     })
                 })
                 .chain(std::iter::once(Ok(StreamChunk {
+                    progress: false,
                     delta: String::new(),
                     done: true,
                 }))),

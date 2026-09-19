@@ -9,7 +9,7 @@ ListView {
     property var store
 
     clip: true
-    spacing: 2
+    spacing: 5
     model: {
         const tl = store.timeline.slice();
         tl.reverse();
@@ -23,6 +23,7 @@ ListView {
         spacing: 8
 
         Text {
+            width: 56
             text: {
                 const ts = rowItem.modelData.timestamp ?? "";
                 const d = new Date(ts);
@@ -30,11 +31,11 @@ ListView {
             }
             color: Theme.textDisabled
             font.family: Theme.monoFamily
-            font.pixelSize: Theme.fontSizeSmall - 1
+            font.pixelSize: Theme.fontSizeTiny
         }
 
         Text {
-            width: parent.width - 70
+            width: parent.width - 64
             text: {
                 const e = rowItem.modelData;
                 let txt = e.event ?? "";

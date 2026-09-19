@@ -17,13 +17,26 @@ daemon:
 demo:
     RUST_LOG=${RUST_LOG:-info} cargo run -p teamwork-ai-daemon -- --demo
 
-# Abre o widget no Quickshell
+# Abre o widget no Quickshell (o daemon precisa estar de pé)
+# QML_XHR_ALLOW_FILE_READ: o avatar lê assets/face-data.json via XHR; sem
+# isso o rosto do Jorginho simplesmente não aparece, sem erro nenhum.
 widget:
-    quickshell -p apps/widget/shell.qml
+    QML_XHR_ALLOW_FILE_READ=1 quickshell -p apps/widget/shell.qml
 
 # Testes (não dependem da internet)
 test:
     cargo test --workspace
+    python3 apps/widget/services/test_gestures.py
+    python3 apps/widget/services/test_wake.py
+    python3 apps/widget/services/test_pointer.py
+    python3 apps/widget/services/test_cameras.py
+    @VENV=~/.local/share/teamwork-ai/facetrack/venv/bin/python; \
+      [ -x "$VENV" ] && "$VENV" apps/widget/services/test_preview.py \
+      || echo "(espelho da mão: venv do facetrack ausente, pulando)"
+
+# Diagnóstico do controle por gesto (mostra o que a câmera entende da mão)
+gesture-doctor:
+    ./scripts/gesture-doctor.sh
 
 # Lints
 lint:

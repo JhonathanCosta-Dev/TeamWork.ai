@@ -32,8 +32,12 @@ impl Default for DaemonConfig {
         rpm.insert("gemini".to_string(), 10);
         rpm.insert("groq".to_string(), 25);
         rpm.insert("openrouter".to_string(), 15);
+        rpm.insert("anthropic".to_string(), 10);
+        // Servidor local (self-hosted): sem limite externo — generoso.
+        rpm.insert("local".to_string(), 600);
         let orchestrator = OrchestratorConfig {
             memory_root: Some(crate::paths::memory_dir()),
+            attachments_root: Some(crate::paths::attachments_dir()),
             ..OrchestratorConfig::default()
         };
         Self {
@@ -270,6 +274,12 @@ pub fn api_key(var: &str, file_env: &HashMap<String, String>) -> Option<String> 
         Ok(v) if !v.trim().is_empty() => Some(v),
         _ => file_env.get(var).cloned(),
     }
+}
+
+/// Lê um valor de configuração não-secreto (ex.: URL base do LLM local) com a
+/// mesma precedência de `api_key`: ambiente do processo e depois o arquivo env.
+pub fn env_value(var: &str, file_env: &HashMap<String, String>) -> Option<String> {
+    api_key(var, file_env)
 }
 
 #[cfg(test)]

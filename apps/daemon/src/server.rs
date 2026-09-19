@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use teamwork_orchestrator::Orchestrator;
 use teamwork_protocol::{events, Event, Response, MAX_LINE_BYTES};
-use teamwork_providers::{GeminiProvider, MockProvider, OpenAiCompatProvider, ProviderRegistry};
+use teamwork_providers::{
+    AnthropicProvider, GeminiProvider, MockProvider, OpenAiCompatProvider, ProviderRegistry,
+};
 use teamwork_storage::Storage;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Framed, LinesCodec};
@@ -63,6 +65,36 @@ pub fn build_registry(config: &DaemonConfig) -> ProviderRegistry {
             allow_paid_models = config.allow_paid_models,
             "provedor openrouter configurado"
         );
+    }
+    if let Some(key) = crate::config::api_key("ANTHROPIC_API_KEY", &file_env) {
+        registry.register(
+            Arc::new(AnthropicProvider::new(key, config.allow_paid_models)),
+            config.rpm("anthropic"),
+        );
+        tracing::info!(
+            allow_paid_models = config.allow_paid_models,
+            "provedor anthropic configurado (sem tier gratuito — requer allow_paid_models=true para uso)"
+        );
+    }
+    // Servidor de IA local/self-hosted compatível com OpenAI (Ollama, LM
+    // Studio, vLLM…), rodando na máquina do usuário ou em outra na rede.
+    // Basta a URL base (ex.: http://192.168.0.42:11434/v1); os modelos são
+    // descobertos por `/models` e são sempre gratuitos (rodam no hardware do
+    // usuário). A chave é opcional — servidores locais costumam ignorá-la.
+    if let Some(base_url) = crate::config::env_value("LOCAL_LLM_BASE_URL", &file_env) {
+        let key = crate::config::env_value("LOCAL_LLM_API_KEY", &file_env).unwrap_or_default();
+        registry.register(
+            Arc::new(OpenAiCompatProvider::local(&base_url, key)),
+            config.rpm("local"),
+        );
+        tracing::info!(base_url = %base_url, "provedor local (self-hosted, OpenAI-compat) configurado");
+    }
+    // Claude Code CLI local (sem chave: usa a assinatura já autenticada do
+    // usuário). Agência na máquina em modo "sem shell": lê/edita arquivos,
+    // skills e web pré-aprovados; Bash negado pelo gate do próprio CLI.
+    if let Some(p) = teamwork_providers::ClaudeCodeProvider::detect() {
+        registry.register(Arc::new(p), config.rpm("claude-code"));
+        tracing::info!("provedor claude-code configurado (CLI local, agência sem shell)");
     }
     registry
 }

@@ -4,8 +4,9 @@ Todos os provedores implementam o trait `AiProvider` (`crates/providers`):
 `health_check`, `list_models`, `complete`, `stream`, `capabilities`.
 
 Chaves de API são lidas **apenas de variáveis de ambiente** no daemon:
-`GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`. Sem a chave, o
-provedor simplesmente não é registrado (o mock está sempre disponível).
+`GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`.
+Sem a chave, o provedor simplesmente não é registrado (o mock está sempre
+disponível).
 
 ## Mock (`mock`)
 
@@ -45,6 +46,24 @@ com duas subtarefas paralelas + revisão. Modelos: `mock-fast`, `mock-smart`.
   A indisponibilidade de um modelo gratuito aparece como erro claro na
   interface; o usuário escolhe outro modelo manualmente.
 - Cabeçalhos opcionais de identificação enviados: `HTTP-Referer`, `X-Title`.
+
+## Anthropic Claude (`anthropic`)
+
+- REST oficial `/v1/messages`; chave no header `x-api-key` +
+  `anthropic-version`.
+- Modelos descobertos via `GET /v1/models`; nenhum nome de modelo é fixado
+  no código.
+- Diferente das APIs OpenAI-compatíveis: `system` é um campo de nível
+  superior separado de `messages` (só `user`/`assistant`), e `max_tokens` é
+  **obrigatório** (usa um padrão de 4096 quando o chamador não define um).
+- Streaming SSE nativo (eventos `content_block_delta`/`message_stop`).
+- **Sem tier gratuito** — ao contrário de Gemini/Groq/OpenRouter (que têm
+  modelos gratuitos de verdade), toda chamada à Anthropic tem custo real.
+  Por isso `complete`/`stream` sempre falham com `PaidModelBlocked` a menos
+  que `allow_paid_models = true` — a mesma flag que já libera modelos pagos
+  no OpenRouter (ligar uma libera as duas, não há opt-in por provedor).
+- 529 (`overloaded_error`) cai no tratamento genérico de `Http`, mas
+  `is_retryable()` já trata qualquer status ≥500 como retentável.
 
 ## Regras financeiras e de quota
 

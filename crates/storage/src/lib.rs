@@ -325,6 +325,56 @@ impl Storage {
         Ok(())
     }
 
+    // ------------------------------------------------------------------
+    // Conversa com o usuário (histórico do chat)
+    // ------------------------------------------------------------------
+
+    /// Grava um turno da conversa. `role` é "user" ou "assistant".
+    pub async fn insert_conversation_turn(
+        &self,
+        run_id: Option<&str>,
+        role: &str,
+        agent_name: &str,
+        content: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO conversation (run_id, role, agent_name, content, created_at)
+             VALUES (?1,?2,?3,?4,?5)",
+            params![run_id, role, agent_name, content, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Últimos `limit` turnos, em ordem cronológica (mais antigo primeiro).
+    pub async fn recent_conversation(&self, limit: u32) -> Result<Vec<ConversationTurn>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, run_id, role, agent_name, content, created_at
+             FROM conversation ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |r| {
+            Ok(ConversationTurn {
+                id: r.get(0)?,
+                run_id: r.get(1)?,
+                role: r.get(2)?,
+                agent_name: r.get(3)?,
+                content: r.get(4)?,
+                created_at: r.get::<_, String>(5)?,
+            })
+        })?;
+        let mut out: Vec<ConversationTurn> = rows.collect::<rusqlite::Result<_>>()?;
+        out.reverse();
+        Ok(out)
+    }
+
+    /// Apaga a conversa inteira (`/clear`) — o chat recomeça do zero.
+    pub async fn clear_conversation(&self) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute("DELETE FROM conversation", [])?;
+        Ok(())
+    }
+
     pub async fn count_messages_for_run(&self, run_id: &RunId) -> Result<u32> {
         let conn = self.conn.lock().await;
         let n: u32 = conn.query_row(
@@ -651,6 +701,19 @@ fn row_to_run(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     })
 }
 
+/// Um turno da conversa do usuário com a equipe, como aparece no chat.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConversationTurn {
+    pub id: i64,
+    pub run_id: Option<String>,
+    /// "user" ou "assistant".
+    pub role: String,
+    /// Nome do agente que respondeu (vazio para turnos do usuário).
+    pub agent_name: String,
+    pub content: String,
+    pub created_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,7 +726,7 @@ mod tests {
             s.upsert_agent(&a).await.unwrap();
         }
         let agents = s.list_agents().await.unwrap();
-        assert_eq!(agents.len(), 4);
+        assert_eq!(agents.len(), 5);
         assert!(agents.iter().any(|a| a.name == "Íris"));
 
         // Atualização
@@ -671,7 +734,7 @@ mod tests {
         atlas.model_id = "outro-modelo".into();
         s.upsert_agent(&atlas).await.unwrap();
         let again = s.list_agents().await.unwrap();
-        assert_eq!(again.len(), 4);
+        assert_eq!(again.len(), 5);
         assert_eq!(again[0].model_id, "outro-modelo");
     }
 
@@ -770,6 +833,6 @@ mod tests {
             }
         }
         let s2 = Storage::open(&db).unwrap();
-        assert_eq!(s2.list_agents().await.unwrap().len(), 4);
+        assert_eq!(s2.list_agents().await.unwrap().len(), 5);
     }
 }

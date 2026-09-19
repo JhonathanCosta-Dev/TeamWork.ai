@@ -23,6 +23,17 @@ ShellRoot {
         backend: backendClient
     }
 
+    // Monitor salvo pode ter sido desconectado (ex: sobrou só uma tela);
+    // nesse caso o widget cai na primeira tela em vez de sumir.
+    readonly property bool savedMonitorConnected: {
+        const screens = Quickshell.screens;
+        for (let i = 0; i < screens.length; i++) {
+            if (screens[i].name === appStore.monitorName)
+                return true;
+        }
+        return false;
+    }
+
     Variants {
         model: Quickshell.screens
 
@@ -33,37 +44,51 @@ ShellRoot {
                 required property var modelData
                 screen: modelData
 
+                // Copiloto vence expandido/tela cheia: um estado salvo antigo
+                // (ou um IPC solto) não pode inflar o overlay pra tela toda.
+                readonly property bool fs: appStore.fullscreen && !appStore.copilot
+                readonly property bool exp: appStore.expanded && !appStore.copilot
+
                 // Seleção de monitor: "" = apenas o primeiro da lista.
-                visible: appStore.monitorName === ""
+                visible: (appStore.monitorName === "" || !root.savedMonitorConnected)
                          ? modelData === Quickshell.screens[0]
                          : modelData.name === appStore.monitorName
 
                 color: "transparent"
 
                 anchors {
-                    top: appStore.fullscreen || appStore.edge !== "bottom"
-                    bottom: appStore.fullscreen || appStore.edge === "bottom"
-                    right: appStore.fullscreen || appStore.edge !== "left"
-                    left: appStore.fullscreen || appStore.edge === "left"
+                    top: panel.fs || appStore.edge !== "bottom"
+                    bottom: panel.fs || appStore.edge === "bottom"
+                    right: panel.fs || appStore.edge !== "left"
+                    left: panel.fs || appStore.edge === "left"
                 }
 
                 margins {
-                    top: appStore.fullscreen ? 0
+                    top: panel.fs ? 0
                          : (appStore.edge === "left" || appStore.edge === "right" ? 48 : 8)
-                    right: appStore.fullscreen ? 0 : 8
-                    left: appStore.fullscreen ? 0 : 8
-                    bottom: appStore.fullscreen ? 0 : 8
+                    right: panel.fs ? 0 : 8
+                    left: panel.fs ? 0 : 8
+                    bottom: panel.fs ? 0 : 8
                 }
 
-                implicitWidth: appStore.expanded ? 436 : 112
-                implicitHeight: appStore.expanded ? 576 : compact.implicitHeight + 16
+                // 240x300 no copiloto: o raio útil do rosto (min(L,A)*0.36) fica
+                // igual ao do holograma da barra lateral, que é o tamanho pra
+                // que a malha de pontos foi calibrada. Menor que isso e a
+                // silhueta rala.
+                implicitWidth: appStore.copilot ? 240 : (panel.exp ? 436 : 112)
+                implicitHeight: appStore.copilot ? 300
+                                : (panel.exp ? 576 : compact.implicitHeight + 16)
 
-                // Não reserva espaço por padrão.
-                exclusiveZone: appStore.reserveSpace && !appStore.fullscreen ? implicitWidth : 0
+                // Não reserva espaço por padrão. No copiloto NUNCA reserva —
+                // ele é um overlay sobre a área de trabalho, não uma barra.
+                exclusiveZone: appStore.reserveSpace && !panel.fs
+                               && !appStore.copilot ? implicitWidth : 0
 
-                // Foco de teclado sob demanda; não rouba foco.
+                // Foco de teclado sob demanda; não rouba foco. O copiloto nunca
+                // pede foco: ele fica sobre a área de trabalho enquanto você
+                // digita em outra janela.
                 WlrLayershell.layer: WlrLayer.Top
-                WlrLayershell.keyboardFocus: appStore.expanded || appStore.fullscreen
+                WlrLayershell.keyboardFocus: panel.exp || panel.fs
                     ? WlrKeyboardFocus.OnDemand
                     : WlrKeyboardFocus.None
 
@@ -76,7 +101,7 @@ ShellRoot {
 
                 Item {
                     anchors.fill: parent
-                    anchors.margins: appStore.fullscreen ? 0 : 8
+                    anchors.margins: panel.fs ? 0 : 8
                     focus: true
 
                     Keys.onEscapePressed: {
@@ -94,7 +119,7 @@ ShellRoot {
                         anchors.right: parent.right
                         anchors.top: parent.top
                         width: 96
-                        visible: !appStore.expanded && !appStore.fullscreen
+                        visible: !panel.exp && !panel.fs && !appStore.copilot
                         store: appStore
                         onExpandRequested: {
                             appStore.expanded = true;
@@ -105,12 +130,13 @@ ShellRoot {
                             appStore.saveUiSettings();
                             expandedView.focusTerminal();
                         }
+                        onCopilotRequested: appStore.setCopilot(true)
                     }
 
                     ExpandedView {
                         id: expandedView
                         anchors.fill: parent
-                        visible: appStore.expanded && !appStore.fullscreen
+                        visible: panel.exp && !panel.fs
                         store: appStore
                         screens: Quickshell.screens
                         onCollapseRequested: {
@@ -122,13 +148,57 @@ ShellRoot {
                             appStore.saveUiSettings();
                             fullscreenView.focusTerminal();
                         }
+                        onCopilotRequested: appStore.setCopilot(true)
+                    }
+
+                    // UM serviço de voz por painel, ativo SÓ no painel
+                    // visível: o shell cria um painel por monitor, e sem
+                    // esta trava cada monitor abria o próprio microfone
+                    // (vozes e transcrições em dobro/triplo).
+                    VoiceService {
+                        id: voiceSvc
+                        store: appStore
+                        active: panel.visible
+                    }
+
+                    // Rastreamento facial por webcam (opt-in). Ativo só no
+                    // painel visível e com a câmera ligada nas configurações.
+                    FaceTrackService {
+                        id: faceSvc
+                        store: appStore
+                        active: panel.visible
+                    }
+
+                    // Controle de janelas por gesto de mão. Ativo só no
+                    // painel visível: com um painel por monitor, sem esta
+                    // trava o mesmo gesto executaria a ação três vezes.
+                    WindowGestures {
+                        id: gestureSvc
+                        store: appStore
+                        active: panel.visible
+                    }
+
+                    CopilotView {
+                        id: copilotView
+                        anchors.fill: parent
+                        visible: appStore.copilot
+                        store: appStore
+                        voice: voiceSvc
+                        faceTrack: faceSvc
+                        onExpandRequested: {
+                            appStore.setCopilot(false);
+                            appStore.expanded = true;
+                            appStore.saveUiSettings();
+                        }
                     }
 
                     FullscreenView {
                         id: fullscreenView
                         anchors.fill: parent
-                        visible: appStore.fullscreen
+                        visible: panel.fs
                         store: appStore
+                        voice: voiceSvc
+                        faceTrack: faceSvc
                         screens: Quickshell.screens
                         onExitFullscreen: {
                             appStore.fullscreen = false;
@@ -140,10 +210,86 @@ ShellRoot {
                             appStore.expanded = false;
                             appStore.saveUiSettings();
                         }
+                        onCopilotRequested: appStore.setCopilot(true)
                     }
                 }
             }
         }
+    }
+
+    // Retorno visual dos gestos (selo "no comando" e a confirmação de fechar
+    // janela), numa camada própria sobre a área de trabalho. Só existe
+    // enquanto há o que mostrar — fora isso, nenhuma superfície é criada.
+    PanelWindow {
+        id: gestureLayer
+        visible: appStore.gesturesEnabled && appStore.cameraEnabled
+                 && gestureOverlay.showing
+        // Só a caixa que o conteúdo pede: o espelho da mão entra e sai, e uma
+        // janela de altura fixa deixaria um retângulo vazio na área de
+        // trabalho o tempo todo.
+        implicitHeight: gestureOverlay.desiredHeight
+        // Monitor escolhido em Config; vazio = o mesmo do widget, e se aquele
+        // também estiver vazio (ou desconectado), o primeiro da lista.
+        screen: {
+            // "@ativa": segue a tela em uso. Se o niri ainda não respondeu,
+            // cai no comportamento de antes em vez de sumir da tela.
+            const escolha = appStore.gestureMonitor === appStore.telaAtiva
+                            ? telaEmUso.name : appStore.gestureMonitor;
+            const alvo = escolha !== "" ? escolha : appStore.monitorName;
+            if (alvo !== "") {
+                for (const s of Quickshell.screens)
+                    if (s.name === alvo)
+                        return s;
+            }
+            return Quickshell.screens[0];
+        }
+        color: "transparent"
+
+        // A posição vem de um par "vertical-horizontal" (ex.: "bottom-right").
+        // Ancorar nos dois lados de um eixo é o que faz o painel esticar; por
+        // isso o centro ancora nos dois e os cantos só em um.
+        readonly property var _pos: appStore.gesturePosition.split("-")
+        readonly property string _vert: gestureLayer._pos[0] ?? "bottom"
+        readonly property string _horiz: gestureLayer._pos[1] ?? "center"
+
+        anchors {
+            top: gestureLayer._vert === "top"
+            bottom: gestureLayer._vert === "bottom"
+            left: gestureLayer._horiz !== "right"
+            right: gestureLayer._horiz !== "left"
+        }
+        margins {
+            top: 60
+            bottom: 60
+            left: 24
+            right: 24
+        }
+
+        implicitWidth: 460
+        exclusiveZone: 0
+
+        WlrLayershell.layer: WlrLayer.Overlay
+        // Nunca rouba o teclado: você confirma com o mouse ou deixa expirar.
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+        GestureOverlay {
+            id: gestureOverlay
+            anchors.fill: parent
+            store: appStore
+        }
+    }
+
+    // Só consulta o compositor enquanto a opção está escolhida E há algo na
+    // tela: seguir a tela ativa não pode custar CPU quando ninguém está
+    // gesticulando.
+    ActiveMonitor {
+        id: telaEmUso
+        // Enquanto o aviso está na tela, e uma vez na inicialização — sem
+        // essa primeira consulta, o primeiro gesto do dia apareceria na tela
+        // padrão e só depois pularia para a certa. A condição se desliga
+        // sozinha assim que o nome chega.
+        active: appStore.gestureMonitor === appStore.telaAtiva
+                && (gestureLayer.visible || telaEmUso.name === "")
     }
 
     // Controle externo: `qs ipc call teamwork toggle` / `... expand`.
@@ -151,26 +297,34 @@ ShellRoot {
         target: "teamwork"
 
         function toggle(): void {
+            appStore.copilot = false;
             appStore.expanded = !appStore.expanded;
             appStore.saveUiSettings();
         }
 
         function expand(): void {
+            appStore.copilot = false;
             appStore.expanded = true;
             appStore.saveUiSettings();
         }
 
         function collapse(): void {
+            appStore.copilot = false;
             appStore.expanded = false;
             appStore.fullscreen = false;
             appStore.saveUiSettings();
         }
 
         function fullscreen(): void {
+            appStore.copilot = false;
             appStore.fullscreen = !appStore.fullscreen;
             if (appStore.fullscreen)
                 appStore.expanded = true;
             appStore.saveUiSettings();
+        }
+
+        function copilot(): void {
+            appStore.setCopilot(!appStore.copilot);
         }
     }
 }

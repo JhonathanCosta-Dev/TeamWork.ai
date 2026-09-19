@@ -1,5 +1,9 @@
 /target
 **/*.rs.bk
+# Cache do Python: os serviços do widget (wake_listener, xtts_server,
+# face_tracker) são importados pelo venv e deixam __pycache__ ao lado do fonte.
+__pycache__/
+*.pyc
 .env
 .env.local
 *.db

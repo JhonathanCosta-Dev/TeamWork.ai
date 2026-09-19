@@ -36,7 +36,7 @@ Column {
                 required property var modelData
                 width: edgeText.implicitWidth + 16
                 height: 24
-                radius: 12
+                radius: Theme.radiusPill
                 color: root.store.edge === edgeChip.modelData
                        ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                 border.width: 1
@@ -73,7 +73,7 @@ Column {
         Rectangle {
             width: anyText.implicitWidth + 16
             height: 24
-            radius: 12
+            radius: Theme.radiusPill
             color: root.store.monitorName === "" ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
             border.width: 1
             border.color: root.store.monitorName === "" ? Theme.accent : Theme.border
@@ -100,7 +100,7 @@ Column {
                 required property var modelData
                 width: monText.implicitWidth + 16
                 height: 24
-                radius: 12
+                radius: Theme.radiusPill
                 color: root.store.monitorName === monChip.modelData.name
                        ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                 border.width: 1
@@ -131,14 +131,14 @@ Column {
         Rectangle {
             width: 36
             height: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: root.store.reserveSpace ? Theme.accent : Theme.surfaceAlt
             border.width: 1
             border.color: Theme.border
             Rectangle {
                 width: 16
                 height: 16
-                radius: 8
+                radius: Theme.radiusPill
                 color: "#fff"
                 anchors.verticalCenter: parent.verticalCenter
                 x: root.store.reserveSpace ? parent.width - width - 2 : 2
@@ -160,6 +160,836 @@ Column {
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeSmall
             font.family: Theme.fontFamily
+        }
+    }
+
+    // Modo copiloto.
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.copilot ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.copilot ? parent.width - width - 2 : 2
+                Behavior on x {
+                    NumberAnimation { duration: Theme.animFast }
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.store.setCopilot(!root.store.copilot)
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Modo copiloto (só o rosto, sobre a área de trabalho)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "No copiloto o Jorginho fica pequeno na borda e tela escolhidas acima, sem terminal e sem roubar o foco do teclado — só te olhando. Ele responde quando você chama (\"fala Jorginho\", aceno, palmas ou o botão do microfone), e a resposta aparece em legenda embaixo do rosto sem abrir a tela cheia. Passe o mouse em cima pra ver os controles."
+        wrapMode: Text.WordWrap
+        color: Theme.textDisabled
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+    }
+
+    // Ciclo de desmontar/remontar do holograma (tela cheia).
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.hologramCycle ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.hologramCycle ? parent.width - width - 2 : 2
+                Behavior on x {
+                    NumberAnimation { duration: Theme.animFast }
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    root.store.hologramCycle = !root.store.hologramCycle;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Holograma: desmontar e remontar a cada 15 s"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Rectangle {
+        width: parent.width
+        height: 1
+        color: Theme.border
+    }
+
+    // ------------------------------------------------------------------
+    // Acessibilidade da IA
+    // ------------------------------------------------------------------
+
+    Text {
+        text: "Acessibilidade da IA"
+        color: Theme.textPrimary
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontSizeLarge
+        font.bold: true
+    }
+
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.speakReplies ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.speakReplies ? parent.width - width - 2 : 2
+                Behavior on x {
+                    NumberAnimation { duration: Theme.animFast }
+                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    root.store.speakReplies = !root.store.speakReplies;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Jorginho lê as respostas dele por voz (mesmo digitando)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "Com esta opção ativa, quando você fala com o Jorginho (@jorginho ou por voz), a resposta final dele também é lida em voz alta — além de aparecer no chat. Os outros agentes respondem só por escrito."
+        color: Theme.textDisabled
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
+    Rectangle {
+        width: parent.width
+        height: 1
+        color: Theme.border
+    }
+
+    // ------------------------------------------------------------------
+    // Câmera / rastreamento facial (opt-in, 100% local)
+    // ------------------------------------------------------------------
+    Row {
+        spacing: 8
+        Text {
+            text: "Câmera (rastreamento facial)"
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeLarge
+            font.bold: true
+        }
+        // Indicador de câmera ativa (bolinha vermelha "REC").
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.store.cameraEnabled
+            width: recRow.implicitWidth + 12
+            height: 18
+            radius: Theme.radiusPill
+            color: Qt.alpha(Theme.danger, 0.2)
+            border.width: 1
+            border.color: Theme.danger
+            Row {
+                id: recRow
+                anchors.centerIn: parent
+                spacing: 4
+                Rectangle {
+                    width: 8; height: 8; radius: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Theme.danger
+                }
+                Text {
+                    text: "câmera ligada"
+                    color: Theme.danger
+                    font.pixelSize: Theme.fontSizeTiny
+                    font.family: Theme.fontFamily
+                }
+            }
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "Ligue pra que o avatar te siga com o olhar no descanso de tela. Os frames NUNCA saem do PC — só a posição do rosto e as expressões vão pro avatar. Requer o setup: scripts/setup-facetrack.sh"
+        color: Theme.textSecondary
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
+    // Toggle: ligar a câmera.
+    Row {
+        spacing: 8
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.cameraEnabled ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.cameraEnabled ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    root.store.cameraEnabled = !root.store.cameraEnabled;
+                    if (!root.store.cameraEnabled)
+                        root.store.puppetMode = false;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Ativar câmera (avatar olha pra você)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Qual webcam usar. Só aparece com mais de uma — numa máquina de câmera
+    // única, a pergunta não existe.
+    Column {
+        width: parent.width
+        spacing: 6
+        visible: root.store.cameraList.length > 1
+
+        Text {
+            text: "Câmera usada"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+
+        Flow {
+            width: parent.width
+            spacing: 4
+
+            Repeater {
+                model: root.store.cameraList
+
+                delegate: Rectangle {
+                    id: camChip
+                    required property var modelData
+                    readonly property bool escolhida:
+                        camChip.modelData.index === root.store.cameraDevice
+
+                    width: camText.implicitWidth + 20
+                    height: 26
+                    radius: Theme.radiusPill
+                    color: camChip.escolhida ? Qt.alpha(Theme.accent, 0.2)
+                                             : Theme.surface
+                    border.width: 1
+                    border.color: camChip.escolhida ? Theme.accent : Theme.border
+
+                    Text {
+                        id: camText
+                        anchors.centerIn: parent
+                        text: camChip.modelData.label ?? camChip.modelData.name
+                        color: camChip.escolhida ? Theme.accent : Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (camChip.escolhida)
+                                return;
+                            root.store.cameraDevice = camChip.modelData.index;
+                            root.store.saveUiSettings();
+                        }
+                    }
+                }
+            }
+        }
+
+        Text {
+            width: parent.width
+            visible: root.store.cameraEnabled
+            text: "Trocar reinicia o rastreamento — a imagem volta em alguns segundos."
+            color: Theme.textDisabled
+            font.pixelSize: Theme.fontSizeTiny
+            font.family: Theme.fontFamily
+            wrapMode: Text.WordWrap
+        }
+    }
+
+    // Toggle: aceno chama o Jorginho (só com câmera ligada).
+    Row {
+        spacing: 8
+        opacity: root.store.cameraEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.waveGreetEnabled ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.waveGreetEnabled ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.cameraEnabled)
+                        return;
+                    root.store.waveGreetEnabled = !root.store.waveGreetEnabled;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Acenar chama o Jorginho (ele aparece e passa a ouvir)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Toggle: modo fantoche (só com câmera ligada).
+    Row {
+        spacing: 8
+        opacity: root.store.cameraEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.puppetMode ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.puppetMode ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.cameraEnabled)
+                        return;
+                    root.store.puppetMode = !root.store.puppetMode;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Modo fantoche (o avatar espelha seu rosto — calibra as emoções)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Botão: cadastrar meu rosto (reconhecimento) + status.
+    Row {
+        spacing: 8
+        Rectangle {
+            id: enrollBtn
+            width: enrollText.implicitWidth + 24
+            height: 30
+            radius: Theme.radiusSmall
+            color: root.store.cameraEnabled ? Qt.alpha(Theme.accent, 0.25) : Theme.surfaceAlt
+            border.width: 1
+            border.color: root.store.cameraEnabled ? Theme.accent : Theme.border
+            opacity: root.store.cameraEnabled ? 1.0 : 0.5
+            Text {
+                id: enrollText
+                anchors.centerIn: parent
+                text: "Cadastrar meu rosto"
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeSmall
+                font.family: Theme.fontFamily
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: if (root.store.cameraEnabled) root.store.enrollFace()
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.store.faceStatus.length > 0 ? root.store.faceStatus
+                : (root.store.faceOwner === 1 ? "reconheci você ✓"
+                : (root.store.faceOwner === 0 ? "rosto não reconhecido" : ""))
+            color: root.store.faceOwner === 1 ? Theme.success : Theme.textDisabled
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Rectangle {
+        width: parent.width
+        height: 1
+        color: Theme.border
+    }
+
+    // ------------------------------------------------------------------
+    // Controle de janelas por gesto (ver services/WindowGestures.qml)
+    // ------------------------------------------------------------------
+
+    Row {
+        spacing: 8
+        Text {
+            text: "Controle por gesto"
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeLarge
+            font.bold: true
+        }
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.store.gestureArmed
+            width: armedText.implicitWidth + 14
+            height: 18
+            radius: Theme.radiusPill
+            color: Qt.alpha(Theme.accent, 0.18)
+            border.width: 1
+            border.color: Theme.accent
+            Text {
+                id: armedText
+                anchors.centerIn: parent
+                text: "mão no comando"
+                color: Theme.accent
+                font.pixelSize: Theme.fontSizeTiny
+                font.family: Theme.fontFamily
+            }
+        }
+    }
+
+    Text {
+        width: parent.width
+        text: "Mexe nas janelas do compositor com a mão, pela mesma webcam do avatar. "
+              + "Levante a mão aberta e segure 1s pra entrar no comando (aparece um selo na tela); "
+              + "3s parado desarma sozinho. Requer câmera ligada e o niri."
+        color: Theme.textSecondary
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
+    // Toggle: ligar o controle por gesto (só com câmera ligada).
+    Row {
+        spacing: 8
+        opacity: root.store.cameraEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.gesturesEnabled ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.gesturesEnabled ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.cameraEnabled)
+                        return;
+                    root.store.gesturesEnabled = !root.store.gesturesEnabled;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.store.cameraEnabled
+                  ? "Controlar janelas com a mão"
+                  : "Controlar janelas com a mão (ligue a câmera antes)"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Toggle: espelho da mão (só com o controle por gesto ligado).
+    Row {
+        spacing: 8
+        opacity: root.store.gesturesEnabled ? 1.0 : 0.4
+        Rectangle {
+            width: 36
+            height: 20
+            radius: Theme.radiusPill
+            color: root.store.gesturePreview ? Theme.accent : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            Rectangle {
+                width: 16
+                height: 16
+                radius: Theme.radiusPill
+                color: "#fff"
+                anchors.verticalCenter: parent.verticalCenter
+                x: root.store.gesturePreview ? parent.width - width - 2 : 2
+                Behavior on x { NumberAnimation { duration: Theme.animFast } }
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!root.store.gesturesEnabled)
+                        return;
+                    root.store.gesturePreview = !root.store.gesturePreview;
+                    root.store.saveUiSettings();
+                }
+            }
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Mostrar a câmera e os traços da mão ao gesticular"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+    }
+
+    Text {
+        width: parent.width
+        visible: root.store.gesturePreview
+        text: "O quadro aparece sobre a área de trabalho assim que a câmera vê sua "
+              + "mão, com o esqueleto detectado desenhado por cima — serve pra "
+              + "conferir que o movimento está sendo captado. A imagem fica só na "
+              + "memória da sessão e some junto com ela."
+        color: Theme.textDisabled
+        font.pixelSize: Theme.fontSizeTiny
+        font.family: Theme.fontFamily
+        wrapMode: Text.WordWrap
+    }
+
+    // Onde os avisos de gesto aparecem. O seletor é uma miniatura da tela:
+    // clicar no canto é mais direto do que ler "inferior-direito" numa lista.
+    Column {
+        width: parent.width
+        spacing: 6
+        visible: root.store.gesturesEnabled
+
+        Text {
+            text: "Onde mostrar os avisos de gesto e o espelho da mão"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+        }
+
+        Row {
+            spacing: 10
+
+            // Miniatura da tela com as seis posições.
+            Rectangle {
+                width: 132
+                height: 78
+                radius: Theme.radiusSmall
+                color: Theme.surface
+                border.width: 1
+                border.color: Theme.border
+
+                Grid {
+                    anchors.fill: parent
+                    anchors.margins: 5
+                    columns: 3
+                    rows: 2
+                    spacing: 3
+
+                    Repeater {
+                        model: ["top-left", "top-center", "top-right",
+                                "bottom-left", "bottom-center", "bottom-right"]
+
+                        delegate: Rectangle {
+                            id: posCell
+                            required property var modelData
+                            readonly property bool atual:
+                                root.store.gesturePosition === posCell.modelData
+
+                            width: 38
+                            height: 32
+                            radius: 4
+                            color: posCell.atual ? Qt.alpha(Theme.accent, 0.3)
+                                 : cellMouse.containsMouse ? Theme.surfaceAlt
+                                                           : Theme.surface
+                            border.width: 1
+                            border.color: posCell.atual ? Theme.accent : Theme.border
+
+                            // Um traço no lugar onde o aviso vai aparecer.
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 18
+                                height: 4
+                                radius: 2
+                                color: posCell.atual ? Theme.accent : Theme.textDisabled
+                                opacity: posCell.atual ? 1 : 0.5
+                            }
+
+                            MouseArea {
+                                id: cellMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.store.gesturePosition = posCell.modelData;
+                                    root.store.saveUiSettings();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4
+                visible: root.screens.length > 1
+
+                Text {
+                    text: "Em qual tela"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: Theme.fontFamily
+                }
+
+                Flow {
+                    width: 180
+                    spacing: 4
+
+                    Rectangle {
+                        width: mesmoText.implicitWidth + 14
+                        height: 22
+                        radius: Theme.radiusPill
+                        color: root.store.gestureMonitor === ""
+                               ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
+                        border.width: 1
+                        border.color: root.store.gestureMonitor === ""
+                                      ? Theme.accent : Theme.border
+                        Text {
+                            id: mesmoText
+                            anchors.centerIn: parent
+                            text: "a do widget"
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeTiny
+                            font.family: Theme.fontFamily
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.store.gestureMonitor = "";
+                                root.store.saveUiSettings();
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        id: ativaChip
+                        readonly property bool atual:
+                            root.store.gestureMonitor === root.store.telaAtiva
+
+                        width: ativaText.implicitWidth + 14
+                        height: 22
+                        radius: Theme.radiusPill
+                        color: ativaChip.atual ? Qt.alpha(Theme.accent, 0.25)
+                                               : Theme.surface
+                        border.width: 1
+                        border.color: ativaChip.atual ? Theme.accent : Theme.border
+                        Text {
+                            id: ativaText
+                            anchors.centerIn: parent
+                            text: "a que estou usando"
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeTiny
+                            font.family: Theme.fontFamily
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.store.gestureMonitor = root.store.telaAtiva;
+                                root.store.saveUiSettings();
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        model: root.screens
+                        delegate: Rectangle {
+                            id: gmChip
+                            required property var modelData
+                            readonly property bool atual:
+                                root.store.gestureMonitor === gmChip.modelData.name
+
+                            width: gmText.implicitWidth + 14
+                            height: 22
+                            radius: Theme.radiusPill
+                            color: gmChip.atual ? Qt.alpha(Theme.accent, 0.25)
+                                                : Theme.surface
+                            border.width: 1
+                            border.color: gmChip.atual ? Theme.accent : Theme.border
+                            Text {
+                                id: gmText
+                                anchors.centerIn: parent
+                                text: gmChip.modelData.name
+                                color: Theme.textPrimary
+                                font.pixelSize: Theme.fontSizeTiny
+                                font.family: Theme.monoFamily
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.store.gestureMonitor = gmChip.modelData.name;
+                                    root.store.saveUiSettings();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Text {
+            visible: root.store.gestureMonitor === root.store.telaAtiva
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Segue a tela que o niri considera em uso. Para ela "
+                  + "acompanhar o ponteiro mesmo sem clicar, ligue "
+                  + "focus-follows-mouse na config do niri."
+            color: Theme.textDisabled
+            font.pixelSize: Theme.fontSizeTiny
+            font.family: Theme.fontFamily
+        }
+    }
+
+    // Vocabulário de gestos. Fixo por enquanto — a tabela existe para você
+    // lembrar do gesto sem abrir a documentação.
+    Rectangle {
+        width: parent.width
+        visible: root.store.gesturesEnabled
+        radius: Theme.radius
+        color: Theme.surface
+        border.width: 1
+        border.color: Theme.border
+        implicitHeight: gestureList.implicitHeight + 20
+
+        Column {
+            id: gestureList
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 10
+            spacing: 7
+
+            Repeater {
+                model: [
+                    { g: "✋ →", a: "próxima coluna" },
+                    { g: "✋ ←", a: "coluna anterior" },
+                    { g: "✋ ↑", a: "maximizar" },
+                    { g: "✋ ↓", a: "tela cheia" },
+                    { g: "✌ 4 dedos ↑↓←→", a: "rola a página; o primeiro movimento escolhe o eixo (polegar recolhido)" },
+                    { g: "☝ 3 dedos", a: "move o cursor do mouse" },
+                    { g: "☝ + polegar", a: "fecha o polegar = clique (segure pra arrastar)" },
+                    { g: "✊ fecha", a: "pega a janela sob o cursor" },
+                    { g: "✊ move", a: "a janela acompanha sua mão" },
+                    { g: "✋ abre", a: "solta a janela onde estiver" }
+                ]
+                delegate: Item {
+                    id: gestureRow
+                    required property var modelData
+                    width: gestureList.width
+                    height: 18
+
+                    Text {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 70
+                        text: gestureRow.modelData.g
+                        color: Theme.accent
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.bold: true
+                    }
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 74
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: gestureRow.modelData.a
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeSmall
+                        elide: Text.ElideRight
+                    }
+                }
+            }
         }
     }
 
@@ -198,13 +1028,13 @@ Column {
         width: parent.width
         spacing: 4
         Repeater {
-            model: ["groq", "gemini", "openrouter"]
+            model: ["groq", "gemini", "openrouter", "anthropic"]
             delegate: Rectangle {
                 id: keyProvChip
                 required property var modelData
                 width: keyProvText.implicitWidth + 16
                 height: 24
-                radius: 12
+                radius: Theme.radiusPill
                 color: root.keyProvider === keyProvChip.modelData
                        ? Qt.alpha(Theme.accent, 0.25) : Theme.surface
                 border.width: 1
@@ -268,7 +1098,7 @@ Column {
                 Text {
                     visible: keyInput.text.length === 0 && !keyInput.activeFocus
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "cole a chave aqui (gsk_…, AIza…)"
+                    text: "cole a chave aqui (gsk_…, AIza…, sk-ant-…)"
                     color: Theme.textDisabled
                     font.pixelSize: Theme.fontSizeSmall
                     font.family: Theme.fontFamily

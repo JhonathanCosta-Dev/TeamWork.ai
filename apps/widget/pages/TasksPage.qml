@@ -11,11 +11,12 @@ Column {
     spacing: Theme.spacing
 
     Text {
-        text: "Tarefas"
-        color: Theme.textPrimary
+        text: "TAREFAS"
+        color: Theme.textDisabled
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontSizeLarge
+        font.pixelSize: Theme.fontSizeTiny
         font.bold: true
+        font.letterSpacing: 1.4
     }
 
     Repeater {
@@ -32,15 +33,16 @@ Column {
         visible: root.store.tasks.length === 0
         width: root.width
         title: "Nenhuma tarefa ainda"
-        subtitle: "Use o terminal: @forge analise o projeto"
+        subtitle: "Escreva no chat: @forge analise o projeto"
     }
 
     Text {
-        text: "Linha do tempo"
-        color: Theme.textPrimary
+        text: "LINHA DO TEMPO"
+        color: Theme.textDisabled
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontSizeLarge
+        font.pixelSize: Theme.fontSizeTiny
         font.bold: true
+        font.letterSpacing: 1.4
     }
 
     TaskTimeline {

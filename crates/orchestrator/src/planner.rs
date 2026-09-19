@@ -43,6 +43,15 @@ impl Orchestrator {
         for a in agents {
             prompt.push_str(&format!("AGENT: {}|{}\n", a.name, a.role));
         }
+        // Sem a conversa anterior, "faz igual ao de ontem" vira um plano sobre
+        // nada — o coordenador não tem como saber a que o usuário se refere.
+        let history = self.history_for_run(&run.id).await;
+        if !history.is_empty() {
+            prompt.push_str(&format!(
+                "\nConversa anterior (contexto — não é a solicitação):\n{}\n",
+                history.as_transcript(6)
+            ));
+        }
         prompt.push_str(&format!("\nSolicitação do usuário:\n{}\n", run.request));
 
         let entry = self

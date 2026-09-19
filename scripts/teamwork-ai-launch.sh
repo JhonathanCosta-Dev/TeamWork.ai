@@ -11,6 +11,17 @@ notify() {
     echo "Team Work AI: $1" >&2
 }
 
+# Rede de segurança: o Quickshell cria uma pasta de log por instância em
+# $XDG_RUNTIME_DIR/quickshell/by-id/ e nunca as limpa. Shells em crashloop
+# (ou muitos reinícios) enchem o tmpfs do runtime (1-2 GB), e aí NADA que
+# precise dele sobe — inclusive este widget. Antes de abrir, removemos os
+# logs de instâncias mortas (não tocadas há >10 min); instâncias vivas
+# escrevem continuamente, então seus logs são recentes e ficam preservados.
+QS_LOGS="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/quickshell/by-id"
+if [ -d "$QS_LOGS" ]; then
+    find "$QS_LOGS" -maxdepth 1 -mindepth 1 -type d -mmin +10 -exec rm -rf {} + 2>/dev/null || true
+fi
+
 # Resolve o QML do widget: instalação de usuário primeiro, depois pacote.
 WIDGET_QML=""
 for candidate in \
@@ -32,6 +43,14 @@ if ! command -v quickshell >/dev/null 2>&1; then
     notify "'quickshell' não encontrado no PATH — instale-o (AUR: quickshell/quickshell-git)."
     exit 1
 fi
+
+# Clicar no atalho SEMPRE resulta em UM widget novo no ar: qualquer widget
+# antigo (instalado OU rodando do repositório via terminal) e pipelines de
+# escuta órfãos são encerrados antes — duplicata de widget = voz e
+# transcrição em dobro.
+pkill -f "quickshell -p .*widget/shell.qml" 2>/dev/null || true
+pkill -f "wake_listener.py" 2>/dev/null || true
+sleep 0.4
 
 SOCK="${XDG_RUNTIME_DIR:-/tmp}/teamwork-ai/teamwork-ai.sock"
 
@@ -78,4 +97,7 @@ if [ ! -S "$SOCK" ]; then
     fi
 fi
 
-exec quickshell -p "$WIDGET_QML"
+# QML_XHR_ALLOW_FILE_READ: o avatar (GideonAvatar) lê o modelo assado
+# (assets/face-data.json) via XHR; o Qt bloqueia leitura de arquivo local por
+# padrão, então habilitamos aqui.
+exec env QML_XHR_ALLOW_FILE_READ=1 quickshell -p "$WIDGET_QML"

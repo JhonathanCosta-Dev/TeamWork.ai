@@ -360,7 +360,11 @@ impl AiProvider for GeminiProvider {
                                 let delta = extract_text(&w);
                                 if !delta.is_empty() {
                                     return Ok(Some((
-                                        StreamChunk { delta, done: false },
+                                        StreamChunk {
+                                            progress: false,
+                                            delta,
+                                            done: false,
+                                        },
                                         (bs, buf, false),
                                     )));
                                 }
@@ -379,6 +383,7 @@ impl AiProvider for GeminiProvider {
                         None => {
                             return Ok(Some((
                                 StreamChunk {
+                                    progress: false,
                                     delta: String::new(),
                                     done: true,
                                 },

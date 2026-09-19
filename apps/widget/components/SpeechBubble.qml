@@ -11,9 +11,9 @@ Rectangle {
 
     implicitWidth: Math.min(content.implicitWidth + 16, 210)
     implicitHeight: content.implicitHeight + 10
-    radius: Theme.radiusSmall
-    color: Theme.surfaceAlt
-    border.color: Theme.border
+    radius: Theme.radius
+    color: Theme.panelAlt
+    border.color: Theme.borderStrong
     border.width: 1
     opacity: text.length > 0 || busy ? 1 : 0
     visible: opacity > 0.01

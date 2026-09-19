@@ -4,12 +4,12 @@ use crate::DaemonConfig;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use teamwork_domain::Agent;
+use teamwork_domain::{Agent, Capability};
 use teamwork_orchestrator::{Orchestrator, OrchestratorError};
 use teamwork_protocol::{
-    error_codes, methods, AgentSetModelParams, AgentSetProviderParams, EventsRecentParams,
-    ProviderModelsParams, Request, Response, SettingsGetParams, SettingsSetParams,
-    TaskCreateParams, TaskIdParams, TerminalInputParams,
+    error_codes, methods, AgentSetModelParams, AgentSetProviderParams, ConversationRecentParams,
+    EventsRecentParams, ProviderModelsParams, Request, Response, SettingsGetParams,
+    SettingsSetParams, TaskCreateParams, TaskIdParams, TerminalInputParams, VoiceTranscribeParams,
 };
 use teamwork_providers::ProviderRegistry;
 use teamwork_storage::Storage;
@@ -21,6 +21,20 @@ pub struct AppState {
     pub config: DaemonConfig,
     pub connections: AtomicUsize,
     pub started_at: std::time::Instant,
+}
+
+/// Existe um binário com esse nome no PATH (ou é um caminho válido)?
+fn binary_exists(name: &str) -> bool {
+    if name.contains('/') {
+        return std::path::Path::new(name).exists();
+    }
+    std::env::var("PATH")
+        .ok()
+        .map(|path| {
+            path.split(':')
+                .any(|dir| std::path::Path::new(dir).join(name).exists())
+        })
+        .unwrap_or(false)
 }
 
 fn orch_error_code(e: &OrchestratorError) -> i32 {
@@ -69,6 +83,8 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 provider_id: Option<String>,
                 #[serde(default)]
                 model_id: Option<String>,
+                #[serde(default)]
+                capabilities: Vec<Capability>,
             }
             let p: P = match params(&req) {
                 Ok(p) => p,
@@ -86,6 +102,7 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
             agent.description = p.description;
             agent.avatar = p.avatar;
             agent.system_prompt = p.system_prompt;
+            agent.capabilities = p.capabilities;
             match state.orchestrator.create_agent(agent.clone()).await {
                 Ok(()) => Response::ok(id, json!({ "agent_id": agent.id })),
                 Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
@@ -110,6 +127,8 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 enabled: Option<bool>,
                 #[serde(default)]
                 max_parallel_tasks: Option<usize>,
+                #[serde(default)]
+                capabilities: Option<Vec<Capability>>,
             }
             let p: P = match params(&req) {
                 Ok(p) => p,
@@ -138,6 +157,9 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
             }
             if let Some(v) = p.max_parallel_tasks {
                 agent.max_parallel_tasks = v.clamp(1, 8);
+            }
+            if let Some(v) = p.capabilities {
+                agent.capabilities = v;
             }
             agent.updated_at = chrono::Utc::now();
             match state.orchestrator.update_agent(agent).await {
@@ -264,6 +286,7 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 "gemini" => "GEMINI_API_KEY",
                 "groq" => "GROQ_API_KEY",
                 "openrouter" => "OPENROUTER_API_KEY",
+                "anthropic" => "ANTHROPIC_API_KEY",
                 other => {
                     return Response::err(
                         id,
@@ -346,12 +369,136 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 Ok(p) => p,
                 Err(r) => return r,
             };
-            if p.input.len() > 8192 {
-                return Response::err(id, error_codes::INVALID_PARAMS, "entrada longa demais");
+            // O teto era 8 KiB e RECUSAVA a mensagem: colar um arquivo de
+            // código inteiro não chegava ao agente. Agora o teto é só um
+            // guarda-corpo contra abuso; texto grande vira anexo em arquivo
+            // (orchestrator::attach), com trecho no prompt e o caminho pra
+            // quem consegue abrir arquivo.
+            if p.input.len() > teamwork_orchestrator::attach::MAX_INPUT_BYTES {
+                return Response::err(
+                    id,
+                    error_codes::INVALID_PARAMS,
+                    format!(
+                        "entrada longa demais ({} bytes; máximo {})",
+                        p.input.len(),
+                        teamwork_orchestrator::attach::MAX_INPUT_BYTES
+                    ),
+                );
             }
             match state.orchestrator.handle_terminal_input(&p.input).await {
                 Ok(reply) => Response::ok(id, serde_json::to_value(reply).unwrap_or(json!({}))),
                 Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
+            }
+        }
+
+        methods::VOICE_TRANSCRIBE => {
+            let p: VoiceTranscribeParams = match params(&req) {
+                Ok(p) => p,
+                Err(r) => return r,
+            };
+            // Limite da API de áudio do Groq (25 MB) — também evita ler
+            // arquivos arbitrários grandes.
+            const MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
+            match tokio::fs::metadata(&p.path).await {
+                Ok(m) if m.len() > MAX_AUDIO_BYTES => {
+                    return Response::err(id, error_codes::INVALID_PARAMS, "áudio maior que 25 MB");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    return Response::err(
+                        id,
+                        error_codes::INVALID_PARAMS,
+                        format!("áudio não encontrado: {e}"),
+                    );
+                }
+            }
+            let audio = match tokio::fs::read(&p.path).await {
+                Ok(a) => a,
+                Err(e) => {
+                    return Response::err(
+                        id,
+                        error_codes::INTERNAL,
+                        format!("falha lendo áudio: {e}"),
+                    );
+                }
+            };
+            let entry = match state.registry.get("groq") {
+                Ok(e) => e,
+                Err(e) => return Response::err(id, error_codes::PROVIDER_ERROR, e.to_string()),
+            };
+            match entry
+                .provider
+                .transcribe(audio, p.language.as_deref())
+                .await
+            {
+                Ok(text) => Response::ok(id, json!({ "text": text })),
+                Err(e) => Response::err(id, error_codes::PROVIDER_ERROR, e.to_string()),
+            }
+        }
+
+        methods::APP_OPEN => {
+            #[derive(serde::Deserialize)]
+            struct P {
+                app: String,
+                #[serde(default)]
+                args: String,
+            }
+            let p: P = match params(&req) {
+                Ok(p) => p,
+                Err(r) => return r,
+            };
+            let app = p.app.trim().to_string();
+            if app.is_empty() || app.len() > 128 {
+                return Response::err(id, error_codes::INVALID_PARAMS, "app inválido");
+            }
+            // App inexistente = erro claro (o setsid -f mascararia o ENOENT).
+            if !binary_exists(&app) {
+                let msg = format!("aplicativo '{app}' não encontrado no PATH");
+                state
+                    .orchestrator
+                    .emit_public(teamwork_protocol::Event::new(
+                        teamwork_protocol::events::APP_OPEN_FAILED,
+                        json!({ "app": app, "error": "não encontrado" }),
+                    ))
+                    .await;
+                return Response::err(id, error_codes::NOT_FOUND, msg);
+            }
+            // Executa desanexado (setsid -f: sessão própria, sobrevive ao
+            // daemon) com a saída descartada. O usuário já confirmou no widget.
+            let mut cmd = std::process::Command::new("setsid");
+            cmd.arg("-f").arg(&app);
+            if !p.args.trim().is_empty() {
+                cmd.args(p.args.split_whitespace());
+            }
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            match cmd.spawn() {
+                Ok(_) => {
+                    tracing::info!(app = %app, "aplicativo aberto por confirmação do usuário");
+                    state
+                        .orchestrator
+                        .emit_public(teamwork_protocol::Event::new(
+                            teamwork_protocol::events::APP_OPENED,
+                            json!({ "app": app }),
+                        ))
+                        .await;
+                    Response::ok(id, json!({ "ok": true, "app": app }))
+                }
+                Err(e) => {
+                    state
+                        .orchestrator
+                        .emit_public(teamwork_protocol::Event::new(
+                            teamwork_protocol::events::APP_OPEN_FAILED,
+                            json!({ "app": app, "error": e.to_string() }),
+                        ))
+                        .await;
+                    Response::err(
+                        id,
+                        error_codes::INTERNAL,
+                        format!("falha ao abrir '{app}': {e}"),
+                    )
+                }
             }
         }
 
@@ -363,6 +510,21 @@ pub async fn dispatch(state: &Arc<AppState>, req: Request) -> Response {
                 Err(e) => Response::err(id, error_codes::INTERNAL, e.to_string()),
             }
         }
+
+        methods::CONVERSATION_RECENT => {
+            let p: ConversationRecentParams =
+                params(&req).unwrap_or(ConversationRecentParams { limit: None });
+            let limit = p.limit.unwrap_or(100).min(500);
+            match state.orchestrator.recent_conversation(limit).await {
+                Ok(turns) => Response::ok(id, json!({ "turns": turns })),
+                Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
+            }
+        }
+
+        methods::CONVERSATION_CLEAR => match state.orchestrator.clear_conversation().await {
+            Ok(()) => Response::ok(id, json!({ "ok": true })),
+            Err(e) => Response::err(id, orch_error_code(&e), e.to_string()),
+        },
 
         methods::SETTINGS_GET => {
             let p: SettingsGetParams = match params(&req) {

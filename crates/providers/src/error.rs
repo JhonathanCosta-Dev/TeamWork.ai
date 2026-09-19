@@ -44,6 +44,9 @@ pub enum ProviderError {
 
     #[error("provedor não configurado: '{0}'")]
     NotConfigured(String),
+
+    #[error("operação não suportada pelo provedor '{provider}'")]
+    Unsupported { provider: String },
 }
 
 impl ProviderError {
@@ -191,7 +194,8 @@ mod tests {
 
     #[test]
     fn generic_400_stays_generic_http() {
-        let body = "{\"error\":{\"message\":\"'temperature' must be between 0 and 2\"}}".to_string();
+        let body =
+            "{\"error\":{\"message\":\"'temperature' must be between 0 and 2\"}}".to_string();
         assert!(matches!(
             ProviderError::from_status("groq", 400, body, None),
             ProviderError::Http { status: 400, .. }

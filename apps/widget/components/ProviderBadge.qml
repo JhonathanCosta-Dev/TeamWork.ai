@@ -8,10 +8,10 @@ Rectangle {
     property string providerId: ""
     property string modelId: ""
 
-    implicitWidth: row.implicitWidth + 12
-    implicitHeight: 18
-    radius: 9
-    color: Theme.surfaceAlt
+    implicitWidth: row.implicitWidth + 14
+    implicitHeight: 19
+    radius: Theme.radiusPill
+    color: Theme.surface
     border.width: 1
     border.color: Theme.border
 
@@ -24,18 +24,18 @@ Rectangle {
             text: root.providerId
             color: Theme.accent
             font.family: Theme.monoFamily
-            font.pixelSize: Theme.fontSizeSmall - 1
+            font.pixelSize: Theme.fontSizeTiny
         }
         Text {
             text: "·"
             color: Theme.textDisabled
-            font.pixelSize: Theme.fontSizeSmall - 1
+            font.pixelSize: Theme.fontSizeTiny
         }
         Text {
             text: root.modelId
             color: Theme.textSecondary
             font.family: Theme.monoFamily
-            font.pixelSize: Theme.fontSizeSmall - 1
+            font.pixelSize: Theme.fontSizeTiny
         }
     }
 }

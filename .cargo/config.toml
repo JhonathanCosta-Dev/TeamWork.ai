@@ -1,0 +1,12 @@
+# Linker explícito para Linux x86-64.
+#
+# O rustc empacotado pelo CachyOS (1.98.1) procura `x86_64-linux-gnu-gcc`, um
+# nome que a distro não instala: o que existe é `gcc`, `cc` e as variantes
+# `x86_64-pc-linux-gnu-gcc` / `x86_64_v4-linux-gnu-gcc`. Sem esta linha, todo
+# `cargo build` morre em "linker not found" antes de compilar a primeira crate,
+# e era preciso lembrar de exportar CARGO_TARGET_..._LINKER a cada comando.
+#
+# `gcc` é o nome canônico em qualquer Linux com toolchain instalada, então
+# fixá-lo aqui não quebra outras máquinas.
+[target.x86_64-unknown-linux-gnu]
+linker = "gcc"

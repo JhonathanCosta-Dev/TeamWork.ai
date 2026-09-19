@@ -8,11 +8,15 @@ Rectangle {
     property var task: ({})
     property var store
 
-    radius: Theme.radiusSmall
-    color: Theme.surface
+    radius: Theme.radius
+    color: root.active ? Theme.surfaceAlt : Theme.surface
     border.width: 1
-    border.color: Theme.border
-    implicitHeight: row.implicitHeight + 14
+    border.color: root.active ? Qt.alpha(Theme.accent, 0.35) : Theme.border
+    implicitHeight: row.implicitHeight + 18
+
+    Behavior on color {
+        ColorAnimation { duration: Theme.animNormal }
+    }
 
     readonly property bool active: ["pending", "planned", "assigned", "waiting",
                                     "running", "paused"].indexOf(task.status) >= 0
@@ -22,9 +26,9 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: 10
-        anchors.rightMargin: 10
-        spacing: 8
+        anchors.leftMargin: 12
+        anchors.rightMargin: 12
+        spacing: 10
 
         AgentStatusBadge {
             status: root.task.status ?? ""
@@ -47,7 +51,7 @@ Rectangle {
                 text: root.task.id ?? ""
                 color: Theme.textDisabled
                 font.family: Theme.monoFamily
-                font.pixelSize: Theme.fontSizeSmall - 2
+                font.pixelSize: Theme.fontSizeTiny
                 elide: Text.ElideMiddle
             }
         }

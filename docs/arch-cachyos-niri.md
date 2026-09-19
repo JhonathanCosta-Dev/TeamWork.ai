@@ -96,8 +96,18 @@ O widget expõe IPC do Quickshell. Exemplo de bind (ajuste conforme sua config):
 ```kdl
 binds {
     Mod+Shift+A { spawn "qs" "ipc" "call" "teamwork" "toggle"; }
+    Mod+Shift+C { spawn "qs" "ipc" "call" "teamwork" "copilot"; }
 }
 ```
+
+Métodos disponíveis: `toggle`, `expand`, `collapse`, `fullscreen` e `copilot`.
+
+O **modo copiloto** deixa só o rosto do Jorginho sobreposto à área de trabalho,
+na tela e borda escolhidas em Config. Ele não reserva espaço (`exclusiveZone`
+zerado) e nunca pede foco de teclado, então você continua digitando na janela de
+baixo enquanto ele fica ali te olhando; responde quando você o chama ("fala
+Jorginho", aceno, palmas ou o botão do microfone) e mostra a resposta em legenda
+sob o rosto, sem inflar pra tela cheia como nos outros modos.
 
 Novamente: valide com `niri validate` e recarregue a sessão.
 
@@ -109,7 +119,8 @@ Quickshell, mas o funcionamento principal não depende disso.
 ## 8. Multi-monitor e escala
 
 - O widget desenha no primeiro monitor por padrão; selecione outro em
-  Config → Monitor (persistido no daemon).
+  Config → Monitor (persistido no daemon). O modo copiloto usa o mesmo
+  monitor e a mesma borda dos outros modos.
 - Escala fracionada: dimensões em unidades lógicas do Qt/Wayland — sem ajuste
   manual de DPI.
 

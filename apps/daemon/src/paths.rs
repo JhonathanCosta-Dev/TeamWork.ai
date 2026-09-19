@@ -61,6 +61,11 @@ pub fn default_db_path() -> PathBuf {
 
 /// Raiz padrão da memória permanente por agente (uma subpasta por agente +
 /// `_equipe/` compartilhada). Ativa por padrão — ver `OrchestratorConfig`.
+/// Onde ficam os textos grandes colados no terminal (ver orchestrator::attach).
+pub fn attachments_dir() -> PathBuf {
+    data_dir().join("attachments")
+}
+
 pub fn memory_dir() -> PathBuf {
     data_dir().join("memory")
 }

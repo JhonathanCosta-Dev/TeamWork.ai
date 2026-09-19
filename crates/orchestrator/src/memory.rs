@@ -237,8 +237,7 @@ pub fn build_context(root: &Path, agent: &Agent) -> MemoryContext {
         || !own_notes.is_empty()
         || !team_notes.is_empty();
 
-    let mut prompt =
-        String::from("\n\n[MEMÓRIA PERMANENTE — contexto interno, uso silencioso]\n");
+    let mut prompt = String::from("\n\n[MEMÓRIA PERMANENTE — contexto interno, uso silencioso]\n");
     if recalled {
         prompt.push_str(
             "Isto é o que você já sabe de execuções anteriores. Use como apoio SILENCIOSO \
